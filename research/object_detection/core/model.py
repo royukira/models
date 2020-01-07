@@ -63,6 +63,7 @@ import six
 import tensorflow as tf
 
 from object_detection.core import standard_fields as fields
+from tensorflow.python.framework import ops as tf_ops
 
 
 # If using a new enough version of TensorFlow, detection models should be a
@@ -72,7 +73,12 @@ try:
 except AttributeError:
   _BaseClass = object
 
-
+"""
+Modified By Roy
+Date: 2019.12.26
+Description: 1. Add collect_spec_ops function  
+2. Add self._spec_ops_dicts member 
+"""
 class DetectionModel(six.with_metaclass(abc.ABCMeta, _BaseClass)):
   """Abstract base class for detection models.
 
@@ -89,6 +95,7 @@ class DetectionModel(six.with_metaclass(abc.ABCMeta, _BaseClass)):
     """
     self._num_classes = num_classes
     self._groundtruth_lists = {}
+    self._spec_ops_dicts = {}
 
   @property
   def num_classes(self):
@@ -373,3 +380,28 @@ class DetectionModel(six.with_metaclass(abc.ABCMeta, _BaseClass)):
       A list of update operators.
     """
     pass
+
+
+  def collect_spec_ops(self, ops, name):
+    """Add a specified operators into self._spec_ops_dicts.
+
+    Add a specified operators into self._spec_ops_dicts to be processed. Using this function we can
+    collect some operators that we want to process. For example, 
+
+    Args:
+      ops: Tensor or Operation
+      name: String of operator name
+
+    Returns:
+      None
+
+    Author: Roy
+    Date: 2019.12.26
+    """
+    if not (isinstance(name, str)):
+      raise TypeError('name must be str, given: {}'.format(type(name)))
+    if not (isinstance(ops, tf_ops.Operation) or tf_ops.is_dense_tensor_like(ops)):
+      raise TypeError('{} must be Operation or Tensor, given: {}'.format(name, x))
+    
+    self._spec_ops_dicts[name] = ops
+

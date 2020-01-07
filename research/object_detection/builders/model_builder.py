@@ -44,7 +44,6 @@ from object_detection.models import ssd_resnet_v1_ppn_feature_extractor as ssd_r
 from object_detection.models.embedded_ssd_mobilenet_v1_feature_extractor import EmbeddedSSDMobileNetV1FeatureExtractor
 from object_detection.models.ssd_inception_v2_feature_extractor import SSDInceptionV2FeatureExtractor
 from object_detection.models.ssd_inception_v3_feature_extractor import SSDInceptionV3FeatureExtractor
-from object_detection.models.ssd_mobilenet_edgetpu_feature_extractor import SSDMobileNetEdgeTPUFeatureExtractor
 from object_detection.models.ssd_mobilenet_v1_feature_extractor import SSDMobileNetV1FeatureExtractor
 from object_detection.models.ssd_mobilenet_v1_fpn_feature_extractor import SSDMobileNetV1FpnFeatureExtractor
 from object_detection.models.ssd_mobilenet_v1_fpn_keras_feature_extractor import SSDMobileNetV1FpnKerasFeatureExtractor
@@ -74,7 +73,6 @@ SSD_FEATURE_EXTRACTOR_CLASS_MAP = {
     'ssd_mobilenet_v2_fpn': SSDMobileNetV2FpnFeatureExtractor,
     'ssd_mobilenet_v3_large': SSDMobileNetV3LargeFeatureExtractor,
     'ssd_mobilenet_v3_small': SSDMobileNetV3SmallFeatureExtractor,
-    'ssd_mobilenet_edgetpu': SSDMobileNetEdgeTPUFeatureExtractor,
     'ssd_resnet50_v1_fpn': ssd_resnet_v1_fpn.SSDResnet50V1FpnFeatureExtractor,
     'ssd_resnet101_v1_fpn': ssd_resnet_v1_fpn.SSDResnet101V1FpnFeatureExtractor,
     'ssd_resnet152_v1_fpn': ssd_resnet_v1_fpn.SSDResnet152V1FpnFeatureExtractor,
@@ -222,8 +220,22 @@ def _build_ssd_feature_extractor(feature_extractor_config,
 
   return feature_extractor_class(**kwargs)
 
+"""
+Modified by Roy
+Date: 2019.12.26
+Description: 
+1. Add getAll parameter to _build_ssd_model() function as a flag controlling whether the loss function returns all operators or not.
 
-def _build_ssd_model(ssd_config, is_training, add_summaries):
+Note: For now, only support localization loss! 
+
+Modified by Roy
+Date: 2020.01.06
+Description: 
+1. Add a dict of loc loss type (loc_loss_type_dict)
+   Fixed bug for IoU-based losses which do not decode the predicted coordinates of boxes 
+   before calculating the relevant values, like square of area, IoU, square of intersection area
+"""
+def _build_ssd_model(ssd_config, is_training, add_summaries, loss_getAll=False):
   """Builds an SSD detection model based on the model config.
 
   Args:
@@ -238,6 +250,16 @@ def _build_ssd_model(ssd_config, is_training, add_summaries):
     ValueError: If ssd_config.type is not recognized (i.e. not registered in
       model_class_map).
   """
+
+  # the dict of loc loss type
+  loc_loss_type_dict = {
+    'weighted_l2' : 'standard',
+    'weighted_smooth_l1' : 'standard',
+    'weighted_iou' : 'iou',
+    'weighted_giou' : 'iou',
+    'weighted_diou' : 'iou'
+  } 
+
   num_classes = ssd_config.num_classes
 
   # Feature extractor
@@ -272,9 +294,10 @@ def _build_ssd_model(ssd_config, is_training, add_summaries):
   image_resizer_fn = image_resizer_builder.build(ssd_config.image_resizer)
   non_max_suppression_fn, score_conversion_fn = post_processing_builder.build(
       ssd_config.post_processing)
+  # 根据loss_getAll，返回相应的loss function
   (classification_loss, localization_loss, classification_weight,
    localization_weight, hard_example_miner, random_example_sampler,
-   expected_loss_weights_fn) = losses_builder.build(ssd_config.loss)
+   expected_loss_weights_fn) = losses_builder.build(ssd_config.loss, loss_getAll)
   normalize_loss_by_num_matches = ssd_config.normalize_loss_by_num_matches
   normalize_loc_loss_by_codesize = ssd_config.normalize_loc_loss_by_codesize
 
@@ -290,6 +313,8 @@ def _build_ssd_model(ssd_config, is_training, add_summaries):
 
   ssd_meta_arch_fn = ssd_meta_arch.SSDMetaArch
   kwargs = {}
+
+  print(loc_loss_type_dict[ssd_config.loss.localization_loss.WhichOneof('localization_loss')])
 
   return ssd_meta_arch_fn(
       is_training=is_training,
@@ -320,7 +345,8 @@ def _build_ssd_model(ssd_config, is_training, add_summaries):
       implicit_example_weight=ssd_config.implicit_example_weight,
       equalization_loss_config=equalization_loss_config,
       return_raw_detections_during_predict=(
-          ssd_config.return_raw_detections_during_predict),
+          False),   # ssd_config.return_raw_detections_during_predict
+      loc_loss_type=loc_loss_type_dict[ssd_config.loss.localization_loss.WhichOneof('localization_loss')],
       **kwargs)
 
 
@@ -608,8 +634,17 @@ META_ARCHITECURE_BUILDER_MAP = {
     'experimental_model': _build_experimental_model
 }
 
+"""
+Modified by Roy
+Date: 2019.12.26
+Description: 
+1. Add getAll parameter to build() function as a flag controlling whether the loss function returns all operators or not.
 
-def build(model_config, is_training, add_summaries=True):
+Note: For now, only support localization loss! 
+"""
+# 在model_lib.py的create_estimator_and_inputs()函数中被调用，返回一个相应的模型计算图(meta_arch)给变量detection_model_fn，
+# 然后detection_model_fn传入model_fn_creator，为Estimator返回一个model_fn模型函数
+def build(model_config, is_training, add_summaries=True, loss_getAll=False):
   """Builds a DetectionModel based on the model config.
 
   Args:
@@ -632,5 +667,10 @@ def build(model_config, is_training, add_summaries=True):
     raise ValueError('Unknown meta architecture: {}'.format(meta_architecture))
   else:
     build_func = META_ARCHITECURE_BUILDER_MAP[meta_architecture]
+
+    if meta_architecture == 'ssd':
+      return build_func(getattr(model_config, meta_architecture), is_training,
+                      add_summaries, loss_getAll)
+
     return build_func(getattr(model_config, meta_architecture), is_training,
                       add_summaries)

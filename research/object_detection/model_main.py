@@ -22,6 +22,11 @@ from absl import flags
 
 import tensorflow as tf
 
+import sys
+sys.path.append('/roy_work/Object_detection_API/models/research')
+sys.path.append("/roy_work/Object_detection_API/models/research/slim/")
+
+
 from object_detection import model_hparams
 from object_detection import model_lib
 
@@ -68,7 +73,8 @@ def main(unused_argv):
       train_steps=FLAGS.num_train_steps,
       sample_1_of_n_eval_examples=FLAGS.sample_1_of_n_eval_examples,
       sample_1_of_n_eval_on_train_examples=(
-          FLAGS.sample_1_of_n_eval_on_train_examples))
+          FLAGS.sample_1_of_n_eval_on_train_examples),
+      loss_getAll=True)
   estimator = train_and_eval_dict['estimator']
   train_input_fn = train_and_eval_dict['train_input_fn']
   eval_input_fns = train_and_eval_dict['eval_input_fns']

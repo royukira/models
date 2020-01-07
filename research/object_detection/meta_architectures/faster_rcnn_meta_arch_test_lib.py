@@ -21,7 +21,6 @@ import numpy as np
 import tensorflow as tf
 
 from google.protobuf import text_format
-from tensorflow.contrib import slim as contrib_slim
 from object_detection.anchor_generators import grid_anchor_generator
 from object_detection.builders import box_predictor_builder
 from object_detection.builders import hyperparams_builder
@@ -38,7 +37,7 @@ from object_detection.utils import ops
 from object_detection.utils import test_case
 from object_detection.utils import test_utils
 
-slim = contrib_slim
+slim = tf.contrib.slim
 BOX_CODE_SIZE = 4
 
 

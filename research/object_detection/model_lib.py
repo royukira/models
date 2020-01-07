@@ -225,9 +225,30 @@ def provide_groundtruth(model, labels):
       groundtruth_weights_list=gt_weights_list,
       groundtruth_is_crowd_list=gt_is_crowd_list)
 
-
+"""
+Modified by Roy
+Date: 2019.12.26
+Description: 
+1. Add loss_getAll parameter (default:False) to model_fn() function as a flag controlling whether the specified function returns all operators or not.
+For example, if loss_getAll is True, we will get a dict: 
+  {'MatchedGIOU/intersections': intersections_op, 
+   'MatchedGIOU/areas1': areas1_op,
+   'MatchedGIOU/areas2': areas2_op,
+   'MatchedGIOU/unions': unions_op,
+   'MatchedGIOU/seb_areas': seb_areas_op,
+   'MatchedGIOU/c_areas': c_areas_op,
+   'MatchedGIOU/pairwise_iou': pairwise_iou_op，
+   'MatchedGIOU/pairwise_coa': pairwise_coa_op,
+   'MatchedGIOU/giou': giou_op,
+   'MatchedGIOU/loss': loss_op,
+   ...,
+   'Loss/localization_loss': localization_loss,
+   'Loss/classification_loss': classification_loss
+  }
+Note: For now, only support localization loss! 
+"""
 def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False,
-                    postprocess_on_cpu=False):
+                    postprocess_on_cpu=False, loss_getAll=False):
   """Creates a model function for `Estimator`.
 
   Args:
@@ -245,6 +266,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False,
   train_config = configs['train_config']
   eval_input_config = configs['eval_input_config']
   eval_config = configs['eval_config']
+  model_config = configs['model']
 
   def model_fn(features, labels, mode, params=None):
     """Constructs the object detection model.
@@ -260,8 +282,15 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False,
       An `EstimatorSpec` that encapsulates the model and its serving
         configurations.
     """
+    """
+    Modified by Roy
+    Date: 2019.12.25
+    Description: Add losses_dict and specified_ops, and passing them into EstimatorSpec. Using them I can hook some
+    intermedia results and losses for debugging "NaN problem".
+    """
     params = params or {}
-    total_loss, train_op, detections, export_outputs = None, None, None, None
+    total_loss, losses_dict, train_op, detections, export_outputs = None, None, None, None, None
+    specified_ops_dict = {}
     is_training = mode == tf.estimator.ModeKeys.TRAIN
 
     # Make sure to set the Keras learning phase. True during training,
@@ -354,7 +383,19 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False,
                                         available_var_map)
 
     if mode in (tf.estimator.ModeKeys.TRAIN, tf.estimator.ModeKeys.EVAL):
-      losses_dict = detection_model.loss(
+      # 调用 xxxMetaArch.loss 函数，如SSDMetaArch.loss()
+      # 目前只支持ssd_meta_arch，所以要加以判断
+      meta_architecture = model_config.WhichOneof('model')
+      if loss_getAll and (meta_architecture == "ssd"):
+        losses_all_ops_dict = detection_model.loss(
+          prediction_dict, features[fields.InputDataFields.true_image_shape], None , True)
+        losses_dict = {
+          'Loss/localization_loss': losses_all_ops_dict['Loss/localization_loss'],
+          'Loss/classification_loss': losses_all_ops_dict['Loss/classification_loss']
+        }
+        specified_ops_dict.update(losses_all_ops_dict)
+      else:
+        losses_dict = detection_model.loss(
           prediction_dict, features[fields.InputDataFields.true_image_shape])
       losses = [loss_tensor for loss_tensor in losses_dict.values()]
       if train_config.add_regularization_loss:
@@ -369,6 +410,9 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False,
           losses_dict['Loss/regularization_loss'] = regularization_loss
       total_loss = tf.add_n(losses, name='total_loss')
       losses_dict['Loss/total_loss'] = total_loss
+
+      if loss_getAll:
+        specified_ops_dict['Loss/total_loss'] = total_loss
 
       if 'graph_rewriter_config' in configs:
         graph_rewriter_fn = graph_rewriter_builder.build(
@@ -409,6 +453,8 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False,
       summaries = [] if use_tpu else None
       if train_config.summarize_gradients:
         summaries = ['gradients', 'gradient_norm', 'global_gradient_norm']
+      
+      # 定义优化器节点，训练时就run这个节点
       train_op = tf.contrib.layers.optimize_loss(
           loss=total_loss,
           global_step=global_step,
@@ -518,10 +564,24 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False,
             save_relative_paths=True)
         tf.add_to_collection(tf.GraphKeys.SAVERS, saver)
         scaffold = tf.train.Scaffold(saver=saver)
+      
+      if len(specified_ops_dict.keys()) != 0:
+        return tf.estimator.EstimatorSpec(
+          mode=mode,
+          predictions=detections,
+          loss=total_loss,
+          losses_dict=losses_dict,
+          train_op=train_op,
+          eval_metric_ops=eval_metric_ops,
+          specified_ops=specified_ops_dict,
+          export_outputs=export_outputs,
+          scaffold=scaffold)
+
       return tf.estimator.EstimatorSpec(
           mode=mode,
           predictions=detections,
           loss=total_loss,
+          losses_dict=losses_dict,
           train_op=train_op,
           eval_metric_ops=eval_metric_ops,
           export_outputs=export_outputs,
@@ -529,7 +589,14 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False,
 
   return model_fn
 
+"""
+Modified by Roy
+Date: 2019.12.26
+Description: 
+1. Add loss_getAll parameter (default:False) to create_estimator_and_inputs() function.
 
+Note: For now, only support localization loss! 
+"""
 def create_estimator_and_inputs(run_config,
                                 hparams,
                                 pipeline_config_path,
@@ -546,6 +613,7 @@ def create_estimator_and_inputs(run_config,
                                 save_final_config=False,
                                 postprocess_on_cpu=False,
                                 export_to_tpu=None,
+                                loss_getAll=False,
                                 **kwargs):
   """Creates `Estimator`, input functions, and steps.
 
@@ -611,7 +679,7 @@ def create_estimator_and_inputs(run_config,
   create_train_input_fn = MODEL_BUILD_UTIL_MAP['create_train_input_fn']
   create_eval_input_fn = MODEL_BUILD_UTIL_MAP['create_eval_input_fn']
   create_predict_input_fn = MODEL_BUILD_UTIL_MAP['create_predict_input_fn']
-  detection_model_fn_base = MODEL_BUILD_UTIL_MAP['detection_model_fn_base']
+  detection_model_fn_base = MODEL_BUILD_UTIL_MAP['detection_model_fn_base']   # model_buiilder.build
 
   configs = get_configs_from_pipeline_file(
       pipeline_config_path, config_override=config_override)
@@ -649,7 +717,13 @@ def create_estimator_and_inputs(run_config,
   if train_steps is None and train_config.num_steps != 0:
     train_steps = train_config.num_steps
 
-  detection_model_fn = functools.partial(
+  # 调用 model_builder.build()
+  # TODO:目前loss_getAll仅支持ssd模型的
+  if model_config.WhichOneof('model') == 'ssd':
+    detection_model_fn = functools.partial(
+      detection_model_fn_base, model_config=model_config, loss_getAll=loss_getAll)
+  else:
+    detection_model_fn = functools.partial(
       detection_model_fn_base, model_config=model_config)
 
   # Create the input functions for TRAIN/EVAL/PREDICT.
@@ -678,7 +752,13 @@ def create_estimator_and_inputs(run_config,
     export_to_tpu = hparams.get('export_to_tpu', False)
   tf.logging.info('create_estimator_and_inputs: use_tpu %s, export_to_tpu %s',
                   use_tpu, export_to_tpu)
-  model_fn = model_fn_creator(detection_model_fn, configs, hparams, use_tpu,
+
+  # Add loss_getAll,这样写以免有的model_fn_creator没有loss_getAll这个参数，然后忘记改导致出错
+  if loss_getAll:
+    model_fn = model_fn_creator(detection_model_fn, configs, hparams, use_tpu,
+                              postprocess_on_cpu, loss_getAll)
+  else:
+    model_fn = model_fn_creator(detection_model_fn, configs, hparams, use_tpu,
                               postprocess_on_cpu)
   if use_tpu_estimator:
     estimator = tf.contrib.tpu.TPUEstimator(

@@ -18,13 +18,12 @@ from absl.testing import parameterized
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.contrib import slim as contrib_slim
 
 from object_detection.models import ssd_feature_extractor_test
 from object_detection.models import ssd_mobilenet_v2_feature_extractor
 from object_detection.models import ssd_mobilenet_v2_keras_feature_extractor
 
-slim = contrib_slim
+slim = tf.contrib.slim
 
 
 @parameterized.parameters(

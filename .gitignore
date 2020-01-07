@@ -102,3 +102,13 @@ tutorials/embedding/text8
 tutorials/embedding/questions-words.txt
 
 samples/outreach/blogs/segmentation_blogpost/carvana-image-masking-challenge/
+
+# Image
+*.png
+*.jpg
+*.bmp
+
+# zip
+*.zip
+*.tar.gz
+*.tar

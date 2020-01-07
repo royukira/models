@@ -45,12 +45,74 @@ class SortOrder(object):
   ascend = 1
   descend = 2
 
+"""
+Added by Roy
+Date: 2019.12.23
+Description: 计算A,B框的最小闭合框的面积（分别有matched_smallestEnclosingBoxesArea和smallestEnclosingBoxesArea两个函数）,
+             用于GIoU的计算
+"""
+def smallestEnclosingBoxesArea(boxlist1, boxlist2, scope=None):
+  """Compute the smallest enclosing boxes' areas of boxlist1 and boxlist2
+  
+  Args:
+    boxlist1: BoxList holding N boxes, shape of [batchsize*N, 4]
+    boxlist2: BoxList holding M boxes, shape of [batchsize*M, 4]
+    scope: name scope.
+
+  Returns:
+    a tensor with shape [N, M] representing the areas of smallest pairwise enclosing boxes .
+  """
+  with tf.name_scope(scope, 'SmallestEnclosingBoxArea'):
+    y_min1, x_min1, y_max1, x_max1 = tf.split(
+        value=boxlist1.get(), num_or_size_splits=4, axis=1)
+    y_min2, x_min2, y_max2, x_max2 = tf.split(
+        value=boxlist2.get(), num_or_size_splits=4, axis=1)
+
+    # fine the coordinate of smallest enclosing box C
+    all_pairs_max_ymax = tf.maximum(y_max1, tf.transpose(y_max2))
+    all_pairs_min_ymin = tf.minimum(y_min1, tf.transpose(y_min2))
+    intersect_heights = tf.maximum(0.0, all_pairs_max_ymax - all_pairs_min_ymin)
+    all_pairs_max_xmax = tf.maximum(x_max1, tf.transpose(x_max2))
+    all_pairs_min_xmin = tf.minimum(x_min1, tf.transpose(x_min2))
+    intersect_widths = tf.maximum(0.0, all_pairs_max_xmax - all_pairs_min_xmin)
+
+    return intersect_heights * intersect_widths
+
+def matched_smallestEnclosingBoxesArea(boxlist1, boxlist2, scope=None):
+  """Compute the smallest enclosing boxes' areas of boxlist1 and boxlist2 (already matched)
+  
+  Args:
+    boxlist1: BoxList holding N boxes, shape of [batchsize*N, 4]
+    boxlist2: BoxList holding N boxes, shape of [batchsize*N, 4]
+    scope: name scope.
+
+  Returns:
+    a tensor with shape [N] representing the smallest enclosing boxes.
+  """
+  with tf.name_scope(scope, 'MatchedSmallestEnclosingBoxArea'):
+    y_min1, x_min1, y_max1, x_max1 = tf.split(
+        value=boxlist1.get(), num_or_size_splits=4, axis=1)
+    y_min2, x_min2, y_max2, x_max2 = tf.split(
+        value=boxlist2.get(), num_or_size_splits=4, axis=1)
+
+    # fine the coordinate of the samllest enclosing boxes
+    max_ymax = tf.maximum(y_max1, y_max2)
+    min_ymin = tf.minimum(y_min1, y_min2)
+    intersect_heights = tf.maximum(0.0, max_ymax - min_ymin)
+    max_xmax = tf.maximum(x_max1, x_max2)
+    min_xmin = tf.minimum(x_min1, x_min2)
+    intersect_widths = tf.maximum(0.0, max_xmax - min_xmin)
+
+    return tf.reshape(intersect_heights * intersect_widths, [-1])
+"""
+End
+"""
 
 def area(boxlist, scope=None):
   """Computes area of boxes.
 
   Args:
-    boxlist: BoxList holding N boxes
+    boxlist: BoxList holding N boxes, shape of [batchsize*N, 4]
     scope: name scope.
 
   Returns:
@@ -83,7 +145,7 @@ def scale(boxlist, y_scale, x_scale, scope=None):
   """scale box coordinates in x and y dimensions.
 
   Args:
-    boxlist: BoxList holding N boxes
+    boxlist: BoxList holding N boxes, shape of [batchsize*N, 4]
     y_scale: (float) scalar tensor
     x_scale: (float) scalar tensor
     scope: name scope.
@@ -211,8 +273,8 @@ def intersection(boxlist1, boxlist2, scope=None):
   """Compute pairwise intersection areas between boxes.
 
   Args:
-    boxlist1: BoxList holding N boxes
-    boxlist2: BoxList holding M boxes
+    boxlist1: BoxList holding N boxes, shape of [batchsize*N, 4]
+    boxlist2: BoxList holding M boxes, shape of [batchsize*M, 4]
     scope: name scope.
 
   Returns:
@@ -236,8 +298,8 @@ def matched_intersection(boxlist1, boxlist2, scope=None):
   """Compute intersection areas between corresponding boxes in two boxlists.
 
   Args:
-    boxlist1: BoxList holding N boxes
-    boxlist2: BoxList holding N boxes
+    boxlist1: BoxList holding N boxes, shape of [batchsize*N, 4]
+    boxlist2: BoxList holding N boxes, shape of [batchsize*N, 4]
     scope: name scope.
 
   Returns:
@@ -261,8 +323,8 @@ def iou(boxlist1, boxlist2, scope=None):
   """Computes pairwise intersection-over-union between box collections.
 
   Args:
-    boxlist1: BoxList holding N boxes
-    boxlist2: BoxList holding M boxes
+    boxlist1: BoxList holding N boxes, shape of [batchsize*N, 4]
+    boxlist2: BoxList holding M boxes, shape of [batchsize*M, 4]
     scope: name scope.
 
   Returns:
@@ -270,10 +332,10 @@ def iou(boxlist1, boxlist2, scope=None):
   """
   with tf.name_scope(scope, 'IOU'):
     intersections = intersection(boxlist1, boxlist2)
-    areas1 = area(boxlist1)
-    areas2 = area(boxlist2)
+    areas1 = area(boxlist1)  # shape of [N]
+    areas2 = area(boxlist2)  # shape of [M]
     unions = (
-        tf.expand_dims(areas1, 1) + tf.expand_dims(areas2, 0) - intersections)
+        tf.expand_dims(areas1, 1) + tf.expand_dims(areas2, 0) - intersections)  # shape of [N, M]
     return tf.where(
         tf.equal(intersections, 0.0),
         tf.zeros_like(intersections), tf.truediv(intersections, unions))
@@ -283,8 +345,8 @@ def matched_iou(boxlist1, boxlist2, scope=None):
   """Compute intersection-over-union between corresponding boxes in boxlists.
 
   Args:
-    boxlist1: BoxList holding N boxes
-    boxlist2: BoxList holding N boxes
+    boxlist1: BoxList holding N boxes, shape of [batchsize*N, 4]
+    boxlist2: BoxList holding N boxes, shape of [batchsize*N, 4]
     scope: name scope.
 
   Returns:
@@ -297,7 +359,195 @@ def matched_iou(boxlist1, boxlist2, scope=None):
     unions = areas1 + areas2 - intersections
     return tf.where(
         tf.equal(intersections, 0.0),
-        tf.zeros_like(intersections), tf.truediv(intersections, unions))
+        tf.zeros_like(intersections), tf.truediv(intersections, unions + 1e-7))
+
+    # NOTE: 如果不加1e-7,就会出现NaN，目前是把导致NaN的原因定位在了这里，分母变成0了，但是为什么Uniou会等于0？？？
+
+"""
+Added by Roy
+Date: 2019.12.23
+Description: 计算GIoU（分别有matched_Giou和Giou两个函数）, 用于GIoU Loss
+"""
+def Giou(boxlist1, boxlist2, scope=None):
+  """Computes pairwise intersection-over-union between box collections.
+
+  Args:
+    boxlist1: BoxList holding N boxes, shape of [batchsize*N, 4]
+    boxlist2: BoxList holding M boxes, shape of [batchsize*M, 4]
+    scope: name scope.
+
+  Returns:
+    a tensor with shape [N, M] representing pairwise GIoU scores.
+  """
+  with tf.name_scope(scope, 'GIOU'):
+    # Union area
+    intersections = intersection(boxlist1, boxlist2)
+    areas1 = area(boxlist1)
+    areas2 = area(boxlist2)
+    unions = (
+        tf.expand_dims(areas1, 1) + tf.expand_dims(areas2, 0) - intersections)
+
+    # smallest enclosing boxes area
+    seb_areas = smallestEnclosingBoxesArea(boxlist1, boxlist2)
+
+    # Complementary area
+    c_areas = seb_areas - unions
+
+    # IoU
+    pairwise_iou = tf.where(tf.equal(intersections, 0.0),
+                            tf.zeros_like(intersections), tf.truediv(intersections, unions + 1e-7))
+
+    """ CoA means complementary over cArea: (C_area - AB_Union) / C_area； scope: [0, 1]"""
+    pairwise_coa = tf.where(tf.equal(c_areas, 0.0),
+                            tf.zeros_like(c_areas), tf.truediv(c_areas, seb_areas))
+
+    # GIoU = IoU -  CoA , scope: [-1, 1]
+    return pairwise_iou - pairwise_coa
+    
+
+def matched_Giou(boxlist1, boxlist2, scope=None):
+  """Compute generalized intersection-over-union between corresponding boxes in boxlists.
+
+  Args:
+    boxlist1: BoxList holding N boxes, shape of [batchsize*N, 4]
+    boxlist2: BoxList holding N boxes, shape of [batchsize*N, 4]
+    scope: name scope.
+
+  Returns:
+    a tensor with shape [N] representing pairwise GIoU scores.
+  """
+  with tf.name_scope(scope, 'MatchedGIOU'):
+    # Union area
+    intersections = matched_intersection(boxlist1, boxlist2)
+    areas1 = area(boxlist1)
+    areas2 = area(boxlist2)
+    unions = areas1 + areas2 - intersections
+
+    # smallest enclosing boxes area
+    seb_areas = matched_smallestEnclosingBoxesArea(boxlist1, boxlist2)
+
+    # Complementary area
+    c_areas = seb_areas - unions
+
+    # IoU
+    pairwise_iou = tf.where(tf.equal(intersections, 0.0),
+                            tf.zeros_like(intersections), tf.truediv(intersections, unions + 1e-7))
+
+    """ CoA means complementary over cArea: (C_area - AB_Union) / C_area； scope: [0, 1]"""
+    # TODO: 这里出现问题，pairwise_coa之前没有排掉不match的框
+    # intersection == 0 的话，说明不match，不用加入计算
+    pairwise_coa = tf.where(tf.equal(intersections, 0.0),
+                            tf.zeros_like(intersections), tf.truediv(c_areas, seb_areas + 1e-7))
+
+    # GIoU = IoU -  CoA , scope: [-1, 1]
+    return pairwise_iou - pairwise_coa
+"""
+End
+"""
+
+def matched_Giou_getAll(boxlist1, boxlist2, scope=None):
+  """Compute generalized intersection-over-union between corresponding boxes in boxlists.
+  getAll version returns all operators in this function
+  Args:
+    boxlist1: BoxList holding N boxes, shape of [batchsize*N, 4], predicted boxes
+    boxlist2: BoxList holding N boxes, shape of [batchsize*N, 4], GT boxes
+    scope: name scope.
+
+  Returns:
+    a list of tensors with shape [N] representing pairwise GIoU scores.
+  """
+  ops_names = ['MatchedGIOU/boxlist1',
+               'MatchedGIOU/boxlist2',
+               'MatchedGIOU/boxlist1_num_boxes',
+               'MatchedGIOU/boxlist2_num_boxes',
+               'MatchedGIOU/intersections', 
+               'MatchedGIOU/areas1',
+               'MatchedGIOU/areas2',
+               'MatchedGIOU/unions',
+               'MatchedGIOU/seb_areas',
+               'MatchedGIOU/c_areas',
+               'MatchedGIOU/pairwise_iou',
+               'MatchedGIOU/pairwise_coa',
+               'MatchedGIOU/giou']
+  with tf.name_scope(scope, 'MatchedGIOU'):
+    # Union area
+    intersections = matched_intersection(boxlist1, boxlist2)
+    areas1 = area(boxlist1)
+    areas2 = area(boxlist2)
+    unions = areas1 + areas2 - intersections
+
+    # smallest enclosing boxes area
+    seb_areas = matched_smallestEnclosingBoxesArea(boxlist1, boxlist2)
+
+    # Complementary area
+    c_areas = seb_areas - unions
+
+    # IoU
+    pairwise_iou = tf.where(tf.equal(intersections, 0.0),
+                            tf.zeros_like(intersections), tf.truediv(intersections, unions))
+
+    """ CoA means complementary over cArea: (C_area - AB_Union) / C_area； scope: [0, 1]"""
+    pairwise_coa = tf.where(tf.equal(intersections, 0.0),
+                            tf.zeros_like(intersections), tf.truediv(c_areas, seb_areas))
+    
+    ops_list = [boxlist1.get(),
+      boxlist2.get(),
+      boxlist1.num_boxes(),
+      boxlist2.num_boxes(),
+      intersections, 
+      areas1, areas2, 
+      unions, 
+      seb_areas, 
+      c_areas, 
+      pairwise_iou, 
+      pairwise_coa, 
+      pairwise_iou - pairwise_coa
+      ]
+
+    if (len(ops_names) != len(ops_list)):
+      raise ValueError("The length of ops_name is not equal to ops_list's.")
+
+    return dict(zip(ops_names, ops_list))
+
+
+"""
+Added by Roy
+Date: 2020.01.06
+Description: 计算DIoU, paper: https://arxiv.org/abs/1911.08287
+"""
+def matched_Diou(boxlist1, boxlist2, scope=None):
+  """Compute Distance intersection-over-union between corresponding boxes in boxlists.
+
+  Args:
+    boxlist1: BoxList holding N boxes, shape of [batchsize*N, 4]
+    boxlist2: BoxList holding N boxes, shape of [batchsize*N, 4]
+    scope: name scope.
+
+  Returns:
+    a tensor with shape [N] representing pairwise GIoU scores.
+  """
+  with tf.name_scope(scope, 'MatchedDIOU'):
+    # Union area
+    intersections = matched_intersection(boxlist1, boxlist2)
+    areas1 = area(boxlist1)
+    areas2 = area(boxlist2)
+    unions = areas1 + areas2 - intersections
+
+    # Centre points
+
+
+    # Euclidean distance
+
+    # The Euclidean distance of the diagonal length of the smallest enclosing box
+
+    # IoU
+    pairwise_iou = tf.where(tf.equal(intersections, 0.0),
+                            tf.zeros_like(intersections), tf.truediv(intersections, unions + 1e-7))
+    
+    # DIoU
+
+
+    return 0  # TODO
 
 
 def ioa(boxlist1, boxlist2, scope=None):

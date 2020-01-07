@@ -26,10 +26,9 @@ of final feature maps.
 import collections
 import functools
 import tensorflow as tf
-from tensorflow.contrib import slim as contrib_slim
 from object_detection.utils import ops
 from object_detection.utils import shape_utils
-slim = contrib_slim
+slim = tf.contrib.slim
 
 # Activation bound used for TPU v1. Activations will be clipped to
 # [-ACTIVATION_BOUND, ACTIVATION_BOUND] when training with

@@ -19,8 +19,6 @@ models.
 """
 import abc
 import tensorflow as tf
-from tensorflow.contrib import slim as contrib_slim
-from tensorflow.contrib import tpu as contrib_tpu
 
 from object_detection.core import box_list
 from object_detection.core import box_list_ops
@@ -33,7 +31,7 @@ from object_detection.utils import shape_utils
 from object_detection.utils import variables_helper
 from object_detection.utils import visualization_utils
 
-slim = contrib_slim
+slim = tf.contrib.slim
 
 
 class SSDFeatureExtractor(object):
@@ -274,7 +272,33 @@ class SSDKerasFeatureExtractor(tf.keras.Model):
 
     return variables_to_restore
 
+"""
+Modified by Roy
+Date: 2019.12.26
+Description: 
+1. Add getAll parameter to loss() function as a flag controlling whether the loss function returns all operators or not.
+For example, if we use losses.WeightedGIOULocalizatonloss_getAll(), we will get a dict: 
+  {'MatchedGIOU/intersections': intersections_op, 
+   'MatchedGIOU/areas1': areas1_op,
+   'MatchedGIOU/areas2': areas2_op,
+   'MatchedGIOU/unions': unions_op,
+   'MatchedGIOU/seb_areas': seb_areas_op,
+   'MatchedGIOU/c_areas': c_areas_op,
+   'MatchedGIOU/pairwise_iou': pairwise_iou_op，
+   'MatchedGIOU/pairwise_coa': pairwise_coa_op,
+   'MatchedGIOU/giou': giou_op,
+   'MatchedGIOU/loss': loss_op
+  }
+Note: For now, only support localization loss! 
 
+Modified by Roy
+Date: 2020.01.06
+Description: 
+1. Add a parameter loc_loss_type and self._loc_loss_type
+2. In loss() function, loc_loss_type decides the predited box whether need to be decoded or not 
+   Fixed bug for IoU-based losses which do not decode the predicted coordinates of boxes 
+   before calculating the relevant values, like square of area, IoU, square of intersection area
+"""
 class SSDMetaArch(model.DetectionModel):
   """SSD Meta-architecture definition."""
 
@@ -307,7 +331,8 @@ class SSDMetaArch(model.DetectionModel):
                implicit_example_weight=0.5,
                equalization_loss_config=None,
                return_raw_detections_during_predict=False,
-               nms_on_host=True):
+               nms_on_host=True,
+               loc_loss_type='standard'):
     """SSDMetaArch Constructor.
 
     TODO(rathodv,jonathanhuang): group NMS parameters + score converter into
@@ -388,6 +413,8 @@ class SSDMetaArch(model.DetectionModel):
         been through postprocessing (i.e. NMS). Default False.
       nms_on_host: boolean (default: True) controlling whether NMS should be
         carried out on the host (outside of TPU).
+      loc_loss_type: the type of localization loss. 'standard' stands for 'lx-norm' loc loss, 
+        'iou' stands for IoU-based loss, like IoU loss, GIoU loss, DIoU loss  
     """
     super(SSDMetaArch, self).__init__(num_classes=box_predictor.num_classes)
     self._is_training = is_training
@@ -431,7 +458,7 @@ class SSDMetaArch(model.DetectionModel):
         background_class + num_foreground_classes * [0], tf.float32)
 
     self._target_assigner = target_assigner_instance
-
+    
     self._classification_loss = classification_loss
     self._localization_loss = localization_loss
     self._classification_loss_weight = classification_loss_weight
@@ -458,6 +485,7 @@ class SSDMetaArch(model.DetectionModel):
     self._return_raw_detections_during_predict = (
         return_raw_detections_during_predict)
     self._nms_on_host = nms_on_host
+    self._loc_loss_type = loc_loss_type
 
   @property
   def anchors(self):
@@ -780,21 +808,14 @@ class SSDMetaArch(model.DetectionModel):
             detection_keypoints, 'raw_keypoint_locations')
         additional_fields[fields.BoxListFields.keypoints] = detection_keypoints
 
-      with tf.init_scope():
-        if tf.executing_eagerly():
-          # soft device placement in eager mode will automatically handle
-          # outside compilation.
-          def _non_max_suppression_wrapper(kwargs):
-            return self._non_max_suppression_fn(**kwargs)
+      def _non_max_suppression_wrapper(kwargs):
+        if self._nms_on_host:
+          # Note: NMS is not memory efficient on TPU. This force the NMS to run
+          # outside of TPU.
+          return tf.contrib.tpu.outside_compilation(
+              lambda x: self._non_max_suppression_fn(**x), kwargs)
         else:
-          def _non_max_suppression_wrapper(kwargs):
-            if self._nms_on_host:
-              # Note: NMS is not memory efficient on TPU. This force the NMS
-              # to run outside of TPU.
-              return contrib_tpu.outside_compilation(
-                  lambda x: self._non_max_suppression_fn(**x), kwargs)
-            else:
-              return self._non_max_suppression_fn(**kwargs)
+          return self._non_max_suppression_fn(**kwargs)
 
       (nmsed_boxes, nmsed_scores, nmsed_classes, nmsed_masks,
        nmsed_additional_fields,
@@ -842,7 +863,7 @@ class SSDMetaArch(model.DetectionModel):
             fields.DetectionResultFields.detection_masks] = nmsed_masks
       return detection_dict
 
-  def loss(self, prediction_dict, true_image_shapes, scope=None):
+  def loss(self, prediction_dict, true_image_shapes, scope=None, getAll=False):
     """Compute scalar loss tensors with respect to provided groundtruth.
 
     Calling this function requires that groundtruth tensors have been
@@ -907,14 +928,49 @@ class SSDMetaArch(model.DetectionModel):
       if self.groundtruth_has_field(fields.InputDataFields.is_annotated):
         losses_mask = tf.stack(self.groundtruth_lists(
             fields.InputDataFields.is_annotated))
-      location_losses = self._localization_loss(
-          prediction_dict['box_encodings'],
+
+      # Note: 传入的是未解码的box coordinates，导致IOU计算出错（NaN problem），官方代码并未对其解码;
+      # 暂时用self._loc_loss_type控制是否需要decode
+      # TODO: batch_reg_targets 应该也需要解码
+      cls_losses = None
+      location_losses = None
+      all_ops_dict = {}
+      prediction_boxes = None
+      if self._loc_loss_type == 'iou':
+        print("decoding...")
+        prediction_boxes, _ = self._batch_decode(prediction_dict['box_encodings'], 
+                                                anchors = self._anchors.get())
+      elif self._loc_loss_type == 'standard':
+        prediction_boxes = prediction_dict['box_encodings']
+      else:
+        raise ValueError("loc loss type: {} is not supported yet!".format(self._loc_loss_type))
+      if getAll:
+        loc_losses_ops = self._localization_loss(
+          prediction_boxes,
+          batch_reg_targets,
+          ignore_nan_targets=True,
+          weights=batch_reg_weights,
+          encoded_prediction_tensor=prediction_dict['box_encodings'],  # TODO: debug完记得delete
+          anchors_tensor=self._anchors.get(),  # TODO: debug完记得delete
+          losses_mask=losses_mask)
+        location_losses = loc_losses_ops['MatchedGIOU/loss']
+        all_ops_dict.update(loc_losses_ops)
+
+        # TODO: _classification_loss 暂时还没有getAll版本，所以不管getAll是什么，都是原版本的函数
+        cls_losses = self._classification_loss(
+          prediction_dict['class_predictions_with_background'],
+          batch_cls_targets,
+          weights=batch_cls_weights,
+          losses_mask=losses_mask)
+      else:
+        location_losses = self._localization_loss(
+          prediction_boxes,
           batch_reg_targets,
           ignore_nan_targets=True,
           weights=batch_reg_weights,
           losses_mask=losses_mask)
-
-      cls_losses = self._classification_loss(
+        
+        cls_losses = self._classification_loss(
           prediction_dict['class_predictions_with_background'],
           batch_cls_targets,
           weights=batch_cls_weights,
@@ -992,6 +1048,9 @@ class SSDMetaArch(model.DetectionModel):
           'Loss/classification_loss': classification_loss
       }
 
+      if getAll:
+        all_ops_dict.update(loss_dict)
+        return all_ops_dict
 
     return loss_dict
 

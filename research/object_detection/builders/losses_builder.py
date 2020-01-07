@@ -21,8 +21,15 @@ from object_detection.core import losses
 from object_detection.protos import losses_pb2
 from object_detection.utils import ops
 
+"""
+Modified by Roy
+Date: 2019.12.26
+Description: 
+1. Add getAll parameter to build() function as a flag controlling whether the loss function returns all operators or not.
 
-def build(loss_config):
+Note: For now, only support localization loss! 
+"""
+def build(loss_config, getAll=False):
   """Build losses based on the config.
 
   Builds classification, localization losses and optionally a hard example miner
@@ -44,9 +51,16 @@ def build(loss_config):
     ValueError: If random_example_sampler is getting non-positive value as
       desired positive example fraction.
   """
-  classification_loss = _build_classification_loss(
+  if getAll:
+    # TODO: 暂时不支持classification_loss的getAll，仅支持localization_loss的，目前是为了debug NaN问题
+    classification_loss = _build_classification_loss(
       loss_config.classification_loss)
-  localization_loss = _build_localization_loss(
+    localization_loss = _build_localization_loss(
+      loss_config.localization_loss, getAll)
+  else:
+    classification_loss = _build_classification_loss(
+      loss_config.classification_loss)
+    localization_loss = _build_localization_loss(
       loss_config.localization_loss)
   classification_weight = loss_config.classification_weight
   localization_weight = loss_config.localization_weight
@@ -173,8 +187,17 @@ def build_faster_rcnn_classification_loss(loss_config):
   return losses.WeightedSoftmaxClassificationLoss(
       logit_scale=config.logit_scale)
 
+"""
+Modified by Roy
+Date: 2019.12.26
+Description: 
+1. Add getAll parameter (default: False) as a flag controlling whether the function returns all operators or not.
+For example, if we use losses.WeightedGIOULocalizatonloss_getAll(), we will get all operators in the function: 
+  [intersections, areas1, areas2, unions, seb_areas, c_areas, pairwise_iou, pairwise_coa, pairwise_iou - pairwise_coa]
 
-def _build_localization_loss(loss_config):
+Note: Only support GIoU loss for now!
+"""
+def _build_localization_loss(loss_config, getAll=False):
   """Builds a localization loss based on the loss config.
 
   Args:
@@ -200,6 +223,15 @@ def _build_localization_loss(loss_config):
 
   if loss_type == 'weighted_iou':
     return losses.WeightedIOULocalizationLoss()
+  
+  if loss_type == "weighted_giou":
+    if getAll:
+      return losses.WeightedGIOULocalizatonloss_getAll()
+    else:
+      return losses.WeightedGIOULocalizatonloss()
+  
+  if loss_type == 'weighted_diou':
+    return losses.WeightedDIOULocalizatonloss()
 
   raise ValueError('Empty loss config.')
 

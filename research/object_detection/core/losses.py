@@ -257,7 +257,8 @@ class WeightedGIOULocalizatonloss_getAll(Loss):
   sum over all pairs which is returned as the total loss.
   """
 
-  def _compute_loss(self, prediction_tensor, target_tensor, weights, encoded_prediction_tensor=None, anchors_tensor=None):
+  def _compute_loss(self, prediction_tensor, target_tensor, weights, 
+  encoded_prediction_tensor=None, anchors_tensor=None, feature_map_idx_tensor=None):
     """Compute loss function.
 
     Args:
@@ -283,6 +284,8 @@ class WeightedGIOULocalizatonloss_getAll(Loss):
       all_ops['MatchedGIOU/encoded_predicted_boxes'] = tf.reshape(encoded_prediction_tensor, [-1, 4])
     if anchors_tensor != None:
       all_ops['MatchedGIOU/anchor_boxes'] = tf.reshape(anchors_tensor, [-1, 4])
+    if feature_map_idx_tensor != None:
+      all_ops['MatchedGIOU/feature_map_idx'] = tf.reshape(feature_map_idx_tensor, [-1, 4])
 
     return all_ops
 

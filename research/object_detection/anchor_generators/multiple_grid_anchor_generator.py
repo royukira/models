@@ -183,6 +183,8 @@ class MultipleGridAnchorGenerator(anchor_generator.AnchorGenerator):
     im_height = tf.cast(im_height, dtype=tf.float32)
     im_width = tf.cast(im_width, dtype=tf.float32)
 
+    # for fk in feature_map_shape_list, like (19*19, 10*10, 5*5, 3*3, 2*2, 1*1)
+    # Calculate 1/fk
     if not self._anchor_strides:
       anchor_strides = [(1.0 / tf.cast(pair[0], dtype=tf.float32),
                          1.0 / tf.cast(pair[1], dtype=tf.float32))
@@ -191,6 +193,9 @@ class MultipleGridAnchorGenerator(anchor_generator.AnchorGenerator):
       anchor_strides = [(tf.cast(stride[0], dtype=tf.float32) / im_height,
                          tf.cast(stride[1], dtype=tf.float32) / im_width)
                         for stride in self._anchor_strides]
+    
+    # for fk in feature_map_shape_list, like (19*19, 10*10, 5*5, 3*3, 2*2, 1*1) 
+    # Calculate Centre point coordinate, (i+0.5/fk, j+0.5/fk) where i,j belong to (0, fk),  
     if not self._anchor_offsets:
       anchor_offsets = [(0.5 * stride[0], 0.5 * stride[1])
                         for stride in anchor_strides]
@@ -314,6 +319,8 @@ def create_ssd_anchors(num_layers=6,
   if base_anchor_size is None:
     base_anchor_size = [1.0, 1.0]
   box_specs_list = []
+
+  # Calculate scales
   if scales is None or not scales:
     scales = [min_scale + (max_scale - min_scale) * i / (num_layers - 1)
               for i in range(num_layers)] + [1.0]

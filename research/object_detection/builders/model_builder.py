@@ -345,7 +345,7 @@ def _build_ssd_model(ssd_config, is_training, add_summaries, loss_getAll=False):
       implicit_example_weight=ssd_config.implicit_example_weight,
       equalization_loss_config=equalization_loss_config,
       return_raw_detections_during_predict=(
-          False),   # ssd_config.return_raw_detections_during_predict
+          loc_loss_type_dict[ssd_config.loss.localization_loss.WhichOneof('localization_loss')] == 'iou'),   # ssd_config.return_raw_detections_during_predict
       loc_loss_type=loc_loss_type_dict[ssd_config.loss.localization_loss.WhichOneof('localization_loss')],
       **kwargs)
 

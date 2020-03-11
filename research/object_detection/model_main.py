@@ -74,7 +74,7 @@ def main(unused_argv):
       sample_1_of_n_eval_examples=FLAGS.sample_1_of_n_eval_examples,
       sample_1_of_n_eval_on_train_examples=(
           FLAGS.sample_1_of_n_eval_on_train_examples),
-      loss_getAll=True)
+      loss_getAll=False)  # 如果不是debug loss function时候，记得设置loss_getAll为false
   estimator = train_and_eval_dict['estimator']
   train_input_fn = train_and_eval_dict['train_input_fn']
   eval_input_fns = train_and_eval_dict['eval_input_fns']

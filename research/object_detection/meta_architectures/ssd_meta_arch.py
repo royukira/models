@@ -411,6 +411,8 @@ class SSDMetaArch(model.DetectionModel):
       return_raw_detections_during_predict: Whether to return raw detection
         boxes in the predict() method. These are decoded boxes that have not
         been through postprocessing (i.e. NMS). Default False.
+        If we want to calculate IoU loss, GIoU loss or somethings calculated via corner points, 
+        the predicted box must be decoded and convert to corner points from center points
       nms_on_host: boolean (default: True) controlling whether NMS should be
         carried out on the host (outside of TPU).
       loc_loss_type: the type of localization loss. 'standard' stands for 'lx-norm' loc loss, 
@@ -593,7 +595,8 @@ class SSDMetaArch(model.DetectionModel):
         1) preprocessed_inputs: the [batch, height, width, channels] image
           tensor.
         2) box_encodings: 4-D float tensor of shape [batch_size, num_anchors,
-          box_code_dimension] containing predicted boxes.
+          box_code_dimension] containing predicted boxes. 
+          The boxes is represented by encoded centre points (cy, cx), encoded height and encoded width
         3) class_predictions_with_background: 3-D float tensor of shape
           [batch_size, num_anchors, num_classes+1] containing class predictions
           (logits) for each of the anchors.  Note that this tensor *includes*
@@ -602,12 +605,15 @@ class SSDMetaArch(model.DetectionModel):
           [batch, height_i, width_i, depth_i].
         5) anchors: 2-D float tensor of shape [num_anchors, 4] containing
           the generated anchors in normalized coordinates.
+          The anchors is represented by corner points (min_y, min_x, max_y, max_x)
         6) final_anchors: 3-D float tensor of shape [batch_size, num_anchors, 4]
           containing the generated anchors in normalized coordinates.
+          The anchors is represented by corner points (min_y, min_x, max_y, max_x)
         If self._return_raw_detections_during_predict is True, the dictionary
         will also contain:
         7) raw_detection_boxes: a 4-D float32 tensor with shape
           [batch_size, self.max_num_proposals, 4] in normalized coordinates.
+          The raw_detection_boxes is represented by corner points (min_y, min_x, max_y, max_x)
         8) raw_detection_feature_map_indices: a 3-D int32 tensor with shape
           [batch_size, self.max_num_proposals].
     """
@@ -937,9 +943,7 @@ class SSDMetaArch(model.DetectionModel):
       all_ops_dict = {}
       prediction_boxes = None
       if self._loc_loss_type == 'iou':
-        print("decoding...")
-        prediction_boxes, _ = self._batch_decode(prediction_dict['box_encodings'], 
-                                                anchors = self._anchors.get())
+        prediction_boxes = prediction_dict['raw_detection_boxes']
       elif self._loc_loss_type == 'standard':
         prediction_boxes = prediction_dict['box_encodings']
       else:
@@ -951,7 +955,8 @@ class SSDMetaArch(model.DetectionModel):
           ignore_nan_targets=True,
           weights=batch_reg_weights,
           encoded_prediction_tensor=prediction_dict['box_encodings'],  # TODO: debug完记得delete
-          anchors_tensor=self._anchors.get(),  # TODO: debug完记得delete
+          anchors_tensor=prediction_dict['final_anchors'],  # TODO: debug完记得delete
+          feature_map_idx_tensor=prediction_dict['raw_detection_feature_map_indices'], # TODO: debug完记得delete
           losses_mask=losses_mask)
         location_losses = loc_losses_ops['MatchedGIOU/loss']
         all_ops_dict.update(loc_losses_ops)

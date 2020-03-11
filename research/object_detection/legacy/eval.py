@@ -45,7 +45,9 @@ Example usage:
 import functools
 import os
 import tensorflow as tf
-
+import sys
+sys.path.append('/roy_work/Object_detection_API/models/research')
+sys.path.append("/roy_work/Object_detection_API/models/research/slim/")
 from object_detection.builders import dataset_builder
 from object_detection.builders import graph_rewriter_builder
 from object_detection.builders import model_builder

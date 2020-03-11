@@ -27,6 +27,11 @@ from deployment import model_deploy
 from nets import nets_factory
 from preprocessing import preprocessing_factory
 
+# cosine_decay_with_warmup need to be imported from object_detection API
+import sys
+sys.path.append('/my_github/models/research')
+from object_detection.utils import learning_schedules as thirdparty_ls
+
 slim = contrib_slim
 
 tf.app.flags.DEFINE_string(
@@ -139,9 +144,11 @@ tf.app.flags.DEFINE_string(
     'learning_rate_decay_type',
     'exponential',
     'Specifies how the learning rate is decayed. One of "fixed", "exponential",'
-    ' or "polynomial"')
+    '"polynomial" or "cosine_decay_with_warmup"')
 
-tf.app.flags.DEFINE_float('learning_rate', 0.01, 'Initial learning rate.')
+tf.app.flags.DEFINE_float(
+    'learning_rate', 0.01, 
+    'Initial learning rate.')
 
 tf.app.flags.DEFINE_float(
     'end_learning_rate', 0.0001,
@@ -172,6 +179,16 @@ tf.app.flags.DEFINE_float(
     'moving_average_decay', None,
     'The decay to use for the moving average.'
     'If left as None, then moving averages are not used.')
+
+tf.app.flags.DEFINE_float(
+    'warmup_learning_rate', 0.01,
+    'Initial learning rate for warm up (Only for cosine_with_warmup)'
+)
+
+tf.app.flags.DEFINE_integer(
+    'warmup_steps', 1000,
+    'Number of warmup steps. (Only for cosine_with_warmup)'
+)
 
 #######################
 # Dataset Flags #
@@ -205,7 +222,7 @@ tf.app.flags.DEFINE_integer(
 tf.app.flags.DEFINE_integer(
     'train_image_size', None, 'Train image size')
 
-tf.app.flags.DEFINE_integer('max_number_of_steps', None,
+tf.app.flags.DEFINE_integer('max_number_of_steps', 200000,
                             'The maximum number of training steps.')
 
 tf.app.flags.DEFINE_bool('use_grayscale', False,
@@ -269,15 +286,21 @@ def _configure_learning_rate(num_samples_per_epoch, global_step):
     return tf.constant(FLAGS.learning_rate, name='fixed_learning_rate')
   elif FLAGS.learning_rate_decay_type == 'polynomial':
     return tf.train.polynomial_decay(FLAGS.learning_rate,
-                                     global_step,
-                                     decay_steps,
-                                     FLAGS.end_learning_rate,
-                                     power=1.0,
-                                     cycle=False,
-                                     name='polynomial_decay_learning_rate')
+                                      global_step,
+                                      decay_steps,
+                                      FLAGS.end_learning_rate,
+                                      power=1.0,
+                                      cycle=False,
+                                      name='polynomial_decay_learning_rate')
+  elif FLAGS.learning_rate_decay_type == 'cosine_decay_with_warmup':
+    return thirdparty_ls.cosine_decay_with_warmup(global_step,
+                                                  FLAGS.learning_rate,
+                                                  FLAGS.max_number_of_steps,
+                                                  warmup_learning_rate=FLAGS.warmup_learning_rate,
+                                                  warmup_steps=FLAGS.warmup_steps)
   else:
     raise ValueError('learning_rate_decay_type [%s] was not recognized' %
-                     FLAGS.learning_rate_decay_type)
+                      FLAGS.learning_rate_decay_type)
 
 
 def _configure_optimizer(learning_rate):
@@ -420,6 +443,7 @@ def main(_):
     ######################
     # Select the dataset #
     ######################
+    # TODO: 加入我们的dataset处理方式，返回时Dataset类
     dataset = dataset_factory.get_dataset(
         FLAGS.dataset_name, FLAGS.dataset_split_name, FLAGS.dataset_dir)
 
@@ -445,17 +469,23 @@ def main(_):
     # Create a dataset provider that loads data from the dataset #
     ##############################################################
     with tf.device(deploy_config.inputs_device()):
+      # provider对象根据dataset信息读取数据
       provider = slim.dataset_data_provider.DatasetDataProvider(
           dataset,
           num_readers=FLAGS.num_readers,
           common_queue_capacity=20 * FLAGS.batch_size,
           common_queue_min=10 * FLAGS.batch_size)
+      # 获取数据，获取到的数据是单个数据，还需要对数据进行预处理，组合数据
+      # provider.get(): Returns a list of tensors specified by the given list of items
       [image, label] = provider.get(['image', 'label'])
       label -= FLAGS.labels_offset
 
       train_image_size = FLAGS.train_image_size or network_fn.default_image_size
 
       image = image_preprocessing_fn(image, train_image_size, train_image_size)
+
+      print(image.shape)
+      print(label.shape)  # (?,) 未定义
 
       images, labels = tf.train.batch(
           [image, label],

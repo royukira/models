@@ -23,6 +23,7 @@ from datasets import flowers
 from datasets import imagenet
 from datasets import mnist
 from datasets import visualwakewords
+from datasets import pci_HeadHat_dav4_cls
 
 datasets_map = {
     'cifar10': cifar10,
@@ -30,6 +31,7 @@ datasets_map = {
     'imagenet': imagenet,
     'mnist': mnist,
     'visualwakewords': visualwakewords,
+    'pci_HeadHat_dav4_cls': pci_HeadHat_dav4_cls,
 }
 
 

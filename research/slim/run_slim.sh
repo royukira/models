@@ -9,8 +9,8 @@ PYTHON="${CONDA_PATH}/${TF_VERSION}/bin/python"
 train_dir="/roy_work/Classification/training"                # Dir where checkpoints and event logs are written to
 pretrain_dir="/roy_work/Classification/pretrained_model"     # Dir of pretrained models
 model_name="mobilenet_v2"                                    # model's name, like mobilenet_v2, inception_v3, etc.
-model_version="mobilenet_v2_1.4_224"                         # model's version, like mobilenet_v2_1.4_224
-checkpoint_path="${pretrain_dir}/${model_version}/xxx.ckpt"  # TODO: set as your model.cpkt
+model_version="mobilenet_v2_1.0_224"                         # model's version, like mobilenet_v2_1.4_224
+checkpoint_path="${pretrain_dir}/${model_version}/${model_version}.ckpt"  # TODO: set as your model.cpkt
 dataset_name="pci_HeadHat_dav4_cls"                          # TODO: set as your custom dataset
 dataset_dir="/roy_work/Classification/data/${dataset_name}"  # Dir of dataset
 mode="train"
@@ -18,6 +18,7 @@ batch_size=32                                                # The number of sam
 max_number_of_steps=200000                                   # The maximum number of training steps.
 use_grayscale="False"                                        # Whether to convert input images to grayscale.
 labels_offset=0                                              # An offset for the labels in the dataset. This flag is primarily used to evaluate the VGG and ResNet architectures which do not use a background class for the ImageNet dataset.
+train_image_size=300                                         # The shape of a train image; Default 224
 
 
 # Optimization Params
@@ -40,7 +41,7 @@ quantize_delay=-1  # Number of steps to start quantized training. Set to -1 woul
 
 # Learning Rate Params
 learning_rate_decay_type="cosine_decay_with_warmup" # Specifies how the learning rate is decayed. One of "fixed", "exponential","polynomial" or "cosine_decay_with_warmup" . Default 'exponential'
-learning_rate=0.01  # Initial learning rate. Default 0.01 
+learning_rate=0.005  # Initial learning rate. Default 0.01 
 end_learning_rate=0.0001  # The minimal end learning rate used by a polynomial decay learning rate.
 label_smoothing=0.0  # The amount of label smoothing.
 learning_rate_decay_factor=0.94  # Learning rate decay factor.
@@ -48,7 +49,7 @@ num_epochs_per_decay=2.0  #  Number of epochs after which learning rate decays. 
 sync_replicas="False"  # Whether or not to synchronize the replicas during training.
 replicas_to_aggregate=1  # The Number of gradients to collect before updating params.
 moving_average_decay="None"  # The decay to use for the moving average. If left as None, then moving averages are not used.
-warmup_learning_rate=0.005  # Initial learning rate for warm up (Only for cosine_with_warmup)
+warmup_learning_rate=0.001  # Initial learning rate for warm up (Only for cosine_with_warmup)
 warmup_steps=1000  # Number of warmup steps. (Only for cosine_with_warmup)
 
 
@@ -59,7 +60,7 @@ log_every_n_steps=""  # The frequency with which logs are print.  Default 10
 save_summaries_secs=""  # The frequency with which summaries are saved, in seconds. Default 600
 save_interval_secs=""   # The frequency with which the model is saved, in seconds. Default 600
 trainable_scopes=""            # For fine-tuning one only want train a sub-set of layers 
-checkpoint_exclude_scopes=""   # Consequently, the flags --checkpoint_path and --checkpoint_exclude_scopes are only used during the 0-th global step (model initialization).
+checkpoint_exclude_scopes="MobilenetV2/Logits"   # When we fine-tune a model on a new task with a different number of output labels, we wont be able restore the final logits (classifier) layer, so we need to use this flag to hinder certain variables from being loaded. Consequently, the flags --checkpoint_path and --checkpoint_exclude_scopes are only used during the 0-th global step (model initialization).
 
 
 # ============================  Run  ===========================================
@@ -68,18 +69,27 @@ printf "$PYTHON /roy_work/Object_detection_API/models/research/slim/train_image_
     --dataset_dir=${dataset_dir} \
     --dataset_name=${dataset_name} \
     --dataset_split_name=${mode} \
+    --train_image_size=${train_image_size}\
     --model_name=${model_name} \
+    --checkpoint_path=${checkpoint_path} \
     --learning_rate_decay_type=${learning_rate_decay_type} \
     --learning_rate=${learning_rate} \
-    --warmup_learning_rate=${warmup_learning_rate} \ "
+    --warmup_learning_rate=${warmup_learning_rate} \ 
+    --warmup_steps=${warmup_steps} \
+    --optimizer=${optimizer} \
+    --checkpoint_exclude_scopes=${checkpoint_exclude_scopes}   "
 
 $PYTHON /roy_work/Object_detection_API/models/research/slim/train_image_classifier.py \
     --train_dir=${train_dir} \
     --dataset_dir=${dataset_dir} \
     --dataset_name=${dataset_name} \
     --dataset_split_name=${mode} \
+    --train_image_size=${train_image_size} \
     --model_name=${model_name} \
+    --checkpoint_path=${checkpoint_path} \
     --learning_rate_decay_type=${learning_rate_decay_type} \
     --learning_rate=${learning_rate} \
     --warmup_learning_rate=${warmup_learning_rate} \
-    --warmup_steps=${warmup_steps}
+    --warmup_steps=${warmup_steps} \
+    --optimizer=${optimizer} \
+    --checkpoint_exclude_scopes=${checkpoint_exclude_scopes}

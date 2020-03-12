@@ -58,23 +58,23 @@ V2_DEF = dict(
         (slim.conv2d, slim.separable_conv2d): {'padding': 'SAME'}
     },
     spec=[
-        op(slim.conv2d, stride=2, num_outputs=32, kernel_size=[3, 3]),
+        op(slim.conv2d, stride=2, num_outputs=32, kernel_size=[3, 3]),  #  size/2
         op(ops.expanded_conv,
            expansion_size=expand_input(1, divisible_by=1),
            num_outputs=16),
-        op(ops.expanded_conv, stride=2, num_outputs=24),
-        op(ops.expanded_conv, stride=1, num_outputs=24),
-        op(ops.expanded_conv, stride=2, num_outputs=32),
+        op(ops.expanded_conv, stride=2, num_outputs=24),                # size / 4
+        op(ops.expanded_conv, stride=1, num_outputs=24),                
+        op(ops.expanded_conv, stride=2, num_outputs=32),                # size / 8
         op(ops.expanded_conv, stride=1, num_outputs=32),
         op(ops.expanded_conv, stride=1, num_outputs=32),
-        op(ops.expanded_conv, stride=2, num_outputs=64),
+        op(ops.expanded_conv, stride=2, num_outputs=64),                # size / 16
         op(ops.expanded_conv, stride=1, num_outputs=64),
         op(ops.expanded_conv, stride=1, num_outputs=64),
         op(ops.expanded_conv, stride=1, num_outputs=64),
         op(ops.expanded_conv, stride=1, num_outputs=96),
         op(ops.expanded_conv, stride=1, num_outputs=96),
         op(ops.expanded_conv, stride=1, num_outputs=96),
-        op(ops.expanded_conv, stride=2, num_outputs=160),
+        op(ops.expanded_conv, stride=2, num_outputs=160),               # size / 32
         op(ops.expanded_conv, stride=1, num_outputs=160),
         op(ops.expanded_conv, stride=1, num_outputs=160),
         op(ops.expanded_conv, stride=1, num_outputs=320),
@@ -184,7 +184,7 @@ def mobilenet(input_tensor,
         **kwargs)
 
 mobilenet.default_image_size = 224
-
+# mobilenet.default_image_size = 300
 
 def wrapped_partial(func, *args, **kwargs):
   partial_func = functools.partial(func, *args, **kwargs)

@@ -486,6 +486,7 @@ def main(_):
 
       print(image.shape)
       print(label.shape)  # (?,) 未定义
+      input("Press any key to continue...")
 
       images, labels = tf.train.batch(
           [image, label],

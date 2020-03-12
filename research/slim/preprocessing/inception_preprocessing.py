@@ -208,7 +208,12 @@ def preprocess_for_train(image,
     if not random_crop:
       distorted_image = image
     else:
-      distorted_image, distorted_bbox = distorted_bounding_box_crop(image, bbox)
+      # distorted_image, distorted_bbox = distorted_bounding_box_crop(image, bbox)
+      # Roy's custom random crop
+      distorted_image, distorted_bbox = distorted_bounding_box_crop(image, bbox,
+                                                                    area_range=(0.7, 1.0)
+                                                                    )
+
       # Restore the shape since the dynamic slice based upon the bbox_size loses
       # the third dimension.
       distorted_image.set_shape([None, None, 3])

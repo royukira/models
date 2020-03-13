@@ -34,6 +34,11 @@ from object_detection.utils import learning_schedules as thirdparty_ls
 
 slim = contrib_slim
 
+MODE_MAP = {
+  'train':0,
+  'eval':1    
+}
+
 tf.app.flags.DEFINE_string(
     'master', '', 'The address of the TensorFlow master to use.')
 
@@ -198,7 +203,7 @@ tf.app.flags.DEFINE_string(
     'dataset_name', 'imagenet', 'The name of the dataset to load.')
 
 tf.app.flags.DEFINE_string(
-    'dataset_split_name', 'train', 'The name of the train/test split.')
+    'dataset_split_name', 'train', 'The name of the train/test/train_eval split.')
 
 tf.app.flags.DEFINE_string(
     'dataset_dir', None, 'The directory where the dataset files are stored.')
@@ -220,7 +225,13 @@ tf.app.flags.DEFINE_integer(
     'batch_size', 32, 'The number of samples in each batch.')
 
 tf.app.flags.DEFINE_integer(
+    'eval_batch_size', 32, 'The number of samples in each batch.')
+
+tf.app.flags.DEFINE_integer(
     'train_image_size', None, 'Train image size')
+
+tf.app.flags.DEFINE_integer(
+    'eval_image_size', None, 'eval image size')
 
 tf.app.flags.DEFINE_integer('max_number_of_steps', 200000,
                             'The maximum number of training steps.')
@@ -429,8 +440,11 @@ def main(_):
     #######################
     # Config model_deploy #
     #######################
+    custom_num_clones = FLAGS.num_clones
+    if FLAGS.dataset_split_name == "train_eval":
+      custom_num_clones += 1
     deploy_config = model_deploy.DeploymentConfig(
-        num_clones=FLAGS.num_clones,
+        num_clones=custom_num_clones,
         clone_on_cpu=FLAGS.clone_on_cpu,
         replica_id=FLAGS.task,
         num_replicas=FLAGS.worker_replicas,
@@ -443,18 +457,46 @@ def main(_):
     ######################
     # Select the dataset #
     ######################
-    # TODO: 加入我们的dataset处理方式，返回时Dataset类
-    dataset = dataset_factory.get_dataset(
-        FLAGS.dataset_name, FLAGS.dataset_split_name, FLAGS.dataset_dir)
+    # 返回一个列表，包含training set 和 dev set
+    dataset_list = []  # 0 - train; 1 - dev
+    if FLAGS.dataset_split_name == "train_eval":
+      dataset_list.append(dataset_factory.get_dataset(
+        FLAGS.dataset_name, 'train', FLAGS.dataset_dir
+      ))
+      dataset_list.append(dataset_factory.get_dataset(
+        FLAGS.dataset_name, 'dev', FLAGS.dataset_dir
+      ))
+    elif FLAGS.dataset_split_name == "train":
+      dataset_list.append(dataset_factory.get_dataset(
+        FLAGS.dataset_name, FLAGS.dataset_split_name, FLAGS.dataset_dir
+      ))
+    else:
+      raise ValueError("Only for train or train_eval")
 
     ######################
     # Select the network #
     ######################
-    network_fn = nets_factory.get_network_fn(
+    network_fn_list = []  # 0 - train network fn; 1 - dev network fn
+    if FLAGS.dataset_split_name == "train_eval":
+      # Training network fn
+      network_fn_list.append(nets_factory.get_network_fn(
         FLAGS.model_name,
-        num_classes=(dataset.num_classes - FLAGS.labels_offset),
+        num_classes=(dataset_list[MODE_MAP['train']].num_classes - FLAGS.labels_offset),
         weight_decay=FLAGS.weight_decay,
-        is_training=True)
+        is_training=True))
+      # Eval network fn (w/o L2-regularization)
+      network_fn_list.append(nets_factory.get_network_fn(
+        FLAGS.model_name,
+        num_classes=(dataset_list[MODE_MAP['eval']].num_classes - FLAGS.labels_offset),
+        is_training=False))
+    elif FLAGS.dataset_split_name == "train":
+      network_fn_list.append(nets_factory.get_network_fn(
+        FLAGS.model_name,
+        num_classes=(dataset_list[MODE_MAP['train']].num_classes - FLAGS.labels_offset),
+        weight_decay=FLAGS.weight_decay,
+        is_training=True))
+    else:
+      raise ValueError("Only for train or train_eval")
 
     #####################################
     # Select the preprocessing function #
@@ -468,40 +510,69 @@ def main(_):
     ##############################################################
     # Create a dataset provider that loads data from the dataset #
     ##############################################################
+    batch_queue_list = []  # 0 - train batch; 1 - dev batch
     with tf.device(deploy_config.inputs_device()):
       # provider对象根据dataset信息读取数据
-      provider = slim.dataset_data_provider.DatasetDataProvider(
-          dataset,
-          num_readers=FLAGS.num_readers,
-          common_queue_capacity=20 * FLAGS.batch_size,
-          common_queue_min=10 * FLAGS.batch_size)
-      # 获取数据，获取到的数据是单个数据，还需要对数据进行预处理，组合数据
-      # provider.get(): Returns a list of tensors specified by the given list of items
-      [image, label] = provider.get(['image', 'label'])
-      label -= FLAGS.labels_offset
+      for i in range(len(dataset_list)):
+        dataset = dataset_list[i]
+        if i == MODE_MAP['train']:
+          provider = slim.dataset_data_provider.DatasetDataProvider(
+              dataset,
+              num_readers=FLAGS.num_readers,
+              common_queue_capacity=20 * FLAGS.batch_size,
+              common_queue_min=10 * FLAGS.batch_size)
+        elif i == MODE_MAP['eval']:
+          provider = slim.dataset_data_provider.DatasetDataProvider(
+            dataset,
+            num_readers=FLAGS.num_readers,
+            common_queue_capacity=FLAGS.eval_batch_size,
+            common_queue_min=FLAGS.eval_batch_size)
+        # 获取数据，获取到的数据是单个数据，还需要对数据进行预处理，组合数据
+        # provider.get(): Returns a list of tensors specified by the given list of items
+        [image, label] = provider.get(['image', 'label'])
+        label -= FLAGS.labels_offset
 
-      train_image_size = FLAGS.train_image_size or network_fn.default_image_size
+        if i == MODE_MAP['train']:
+          # Training set
+          train_image_size = FLAGS.train_image_size or network_fn_list[MODE_MAP['train']].default_image_size
+          image = image_preprocessing_fn(image, train_image_size, train_image_size)
+          print("Training dataset: image shape: {}".format(image.shape))
+          images, labels = tf.train.batch(
+            [image, label],
+            batch_size=FLAGS.batch_size,    # training set batch size
+            num_threads=FLAGS.num_preprocessing_threads,
+            capacity=5 * FLAGS.batch_size)
+          labels = slim.one_hot_encoding(
+            labels, dataset.num_classes - FLAGS.labels_offset)
+          batch_queue = slim.prefetch_queue.prefetch_queue(
+            [images, labels], capacity=2 * deploy_config.num_clones)
+        elif i == MODE_MAP['eval']:
+          # Eval Set
+          eval_image_size = FLAGS.eval_image_size or network_fn_list[MODE_MAP['eval']].default_image_size
+          image = image_preprocessing_fn(image, eval_image_size, eval_image_size)
+          print("Eval dataset: image shape: {}".format(image.shape))
+          images, labels = tf.train.batch(
+            [image, label],
+            batch_size=FLAGS.eval_batch_size,
+            num_threads=FLAGS.num_preprocessing_threads,
+            capacity=FLAGS.eval_batch_size)
+          labels = slim.one_hot_encoding(
+            labels, dataset.num_classes - FLAGS.labels_offset)  # 算 validation loss 用到
+          batch_queue = slim.prefetch_queue.prefetch_queue(
+            [images, labels], capacity=2 * deploy_config.num_clones)
+        else:
+          raise ValueError("The length of dataset list is illegal.")
+        batch_queue_list.append(batch_queue)
+    
+    assert(len(batch_queue_list) == len(dataset_list) 
+            and len(batch_queue_list) == len(network_fn_list))
 
-      image = image_preprocessing_fn(image, train_image_size, train_image_size)
-
-      print(image.shape)
-      print(label.shape)  # (?,) 未定义
-      input("Press any key to continue...")
-
-      images, labels = tf.train.batch(
-          [image, label],
-          batch_size=FLAGS.batch_size,
-          num_threads=FLAGS.num_preprocessing_threads,
-          capacity=5 * FLAGS.batch_size)
-      labels = slim.one_hot_encoding(
-          labels, dataset.num_classes - FLAGS.labels_offset)
-      batch_queue = slim.prefetch_queue.prefetch_queue(
-          [images, labels], capacity=2 * deploy_config.num_clones)
+    input("Press any key to continue...")
 
     ####################
     # Define the model #
     ####################
-    def clone_fn(batch_queue):
+    def clone_fn(network_fn, batch_queue, scope_name):
       """Allows data parallelism by creating multiple clones of network_fn."""
       images, labels = batch_queue.dequeue()
       logits, end_points = network_fn(images)
@@ -513,22 +584,53 @@ def main(_):
         slim.losses.softmax_cross_entropy(
             end_points['AuxLogits'], labels,
             label_smoothing=FLAGS.label_smoothing, weights=0.4,
-            scope='aux_loss')
+            scope='{}/aux_loss'.format(scope_name))
       slim.losses.softmax_cross_entropy(
-          logits, labels, label_smoothing=FLAGS.label_smoothing, weights=1.0)
+          logits, labels, label_smoothing=FLAGS.label_smoothing, weights=1.0,
+          scope=scope_name)
       return end_points
 
     # Gather initial summaries.
     summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES))
+    
+    # 在这函数中 clone_fn 会被调用 FLAGS.num_clones 次，默认1次
+    if FLAGS.dataset_split_name == "train":
+      clones = model_deploy.create_clones(deploy_config, 
+                                          clone_fn, 
+                                          [network_fn_list[MODE_MAP['train']],
+                                            batch_queue_list[MODE_MAP['train']],
+                                            'train']
+                                          )
+    elif FLAGS.dataset_split_name == "train_eval":
+      clones =model_deploy.create_train_eval_clones(deploy_config,
+                                                    network_fn_list,
+                                                    batch_queue_list)
+    
+    assert(FLAGS.dataset_split_name == "train_eval" and 
+            len(clones) == (FLAGS.num_clones + 1))
+    
+    train_clones = clones[0:FLAGS.num_clones]
+    if FLAGS.dataset_split_name == "train_eval":
+      eval_clones = clones[-1]
+    else:
+      eval_clones = []
 
-    clones = model_deploy.create_clones(deploy_config, clone_fn, [batch_queue])
-    first_clone_scope = deploy_config.clone_scope(0)
+    #  clone scope format: "training/clone_i" or "eval/clone_(n-1)"                                         
+    train_first_clone_scope = "training/{}".format(deploy_config.clone_scope(0))
+    eval_first_clone_scope = None
+    if FLAGS.dataset_split_name == "train_eval":
+      eval_first_clone_scope = "eval/{}".format(deploy_config.clone_scope(custom_num_clones - 1))
+    
     # Gather update_ops from the first clone. These contain, for example,
     # the updates for the batch_norm variables created by network_fn.
-    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, first_clone_scope)
+    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, train_first_clone_scope)
 
-    # Add summaries for end_points.
-    end_points = clones[0].outputs
+    # Add summaries for end_points (dict).
+    end_points = train_clones[0].outputs
+    eval_end_points = {}
+    if FLAGS.dataset_split_name == "train_eval":
+      eval_end_points = eval_clones[0].outputs
+
     for end_point in end_points:
       x = end_points[end_point]
       summaries.add(tf.summary.histogram('activations/' + end_point, x))
@@ -536,8 +638,13 @@ def main(_):
                                       tf.nn.zero_fraction(x)))
 
     # Add summaries for losses.
-    for loss in tf.get_collection(tf.GraphKeys.LOSSES, first_clone_scope):
-      summaries.add(tf.summary.scalar('losses/%s' % loss.op.name, loss))
+    val_losses_list = []
+    for loss in tf.get_collection(tf.GraphKeys.LOSSES, train_first_clone_scope):
+      summaries.add(tf.summary.scalar('training/losses/%s' % loss.op.name, loss))
+    if FLAGS.dataset_split_name == "train_eval":
+      for loss in tf.get_collection(tf.GraphKeys.LOSSES, eval_first_clone_scope):
+        summaries.add(tf.summary.scalar('validation/losses/%s' % loss.op.name, loss))
+        val_losses_list.append(loss)
 
     # Add summaries for variables.
     for variable in slim.get_model_variables():
@@ -582,15 +689,15 @@ def main(_):
 
     #  and returns a train_tensor and summary_op
     total_loss, clones_gradients = model_deploy.optimize_clones(
-        clones,
+        train_clones,
         optimizer,
         var_list=variables_to_train)
     # Add total_loss to summary.
     summaries.add(tf.summary.scalar('total_loss', total_loss))
 
     # Create gradient updates.
-    grad_updates = optimizer.apply_gradients(clones_gradients,
-                                             global_step=global_step)
+    grad_updates = optimizer.apply_gradients(clones_gradients, 
+                                              global_step=global_step)
     update_ops.append(grad_updates)
 
     update_op = tf.group(*update_ops)
@@ -599,8 +706,7 @@ def main(_):
 
     # Add the summaries from the first clone. These contain the summaries
     # created by model_fn and either optimize_clones() or _gather_clone_loss().
-    summaries |= set(tf.get_collection(tf.GraphKeys.SUMMARIES,
-                                       first_clone_scope))
+    summaries |= set(tf.get_collection(tf.GraphKeys.SUMMARIES, train_first_clone_scope))
 
     # Merge all summaries together.
     summary_op = tf.summary.merge(list(summaries), name='summary_op')
@@ -608,7 +714,46 @@ def main(_):
     ###########################
     # Kicks off the training. #
     ###########################
-    slim.learning.train(
+    # TODO: Evaluation during training
+    # Refer to: 
+    # https://stackoverflow.com/questions/48898117/how-do-you-run-a-validation-loop-during-slim-learning-train
+
+    def train_step_fn(sess, train_op, global_step, train_step_kwargs):
+      if hasattr(train_step_fn, 'step'):
+        train_step_fn.step += 1
+      else:
+        train_step_fn.step = global_step.eval(sess)
+      
+      # Calc Training loss
+      total_loss, should_stop = slim.learning.train_step(sess, 
+                                                          train_op, 
+                                                          global_step, 
+                                                          train_step_kwargs)
+      # Eval on interval
+      if train_step_fn.step and train_step_fn.step % FLAGS.validation_interval == 0:
+        val_losses_out = sess.run(val_losses_list)
+        print(">> Global step: {}; Validation losses: {}".format(
+          train_step_fn.step,
+          val_losses_out
+        ))
+      return [total_loss, should_stop]
+
+    if FLAGS.dataset_split_name == "train_eval":
+      slim.learning.train(
+        train_tensor,
+        logdir=FLAGS.train_dir,
+        train_step_fn=train_step_fn,
+        master=FLAGS.master,
+        is_chief=(FLAGS.task == 0),
+        init_fn=_get_init_fn(),
+        summary_op=summary_op,
+        number_of_steps=FLAGS.max_number_of_steps,
+        log_every_n_steps=FLAGS.log_every_n_steps,
+        save_summaries_secs=FLAGS.save_summaries_secs,
+        save_interval_secs=FLAGS.save_interval_secs,
+        sync_optimizer=optimizer if FLAGS.sync_replicas else None)
+    else:
+      slim.learning.train(
         train_tensor,
         logdir=FLAGS.train_dir,
         master=FLAGS.master,

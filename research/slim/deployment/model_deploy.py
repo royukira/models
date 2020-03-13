@@ -115,6 +115,10 @@ __all__ = ['create_clones',
            'Clone',
           ]
 
+MODE_MAP = {
+  'train':0,
+  'eval':1    
+}
 
 # Namedtuple used to represent a clone during deployment.
 Clone = collections.namedtuple('Clone',
@@ -186,13 +190,99 @@ def create_clones(config, model_fn, args=None, kwargs=None):
                       device=config.variables_device()):
     # Create clones.
     for i in range(0, config.num_clones):
+      with tf.name_scope("training/{}".format(config.clone_scope(i))) as clone_scope:
+        clone_device = config.clone_device(i)
+        with tf.device(clone_device):
+          with tf.variable_scope(tf.get_variable_scope(), 
+                                  reuse=True if i > 0 else None):
+            outputs = model_fn(*args, **kwargs)
+          clones.append(Clone(outputs, clone_scope, clone_device))
+  return clones
+
+def create_train_eval_clones(config, network_fn_list, batch_queue_list,
+                              label_smoothing=0.0,
+                              loss_fn=slim.losses.softmax_cross_entropy):
+  """Creates multiple train_eval clones according to using a `clone_fn`.
+
+  The returned values of `model_fn(*args, **kwargs)` are collected along with
+  the scope and device used to created it in a namedtuple
+  `Clone(outputs, scope, device)`
+
+  Note: it is assumed that any loss created by `model_fn` is collected at
+  the tf.GraphKeys.LOSSES collection.
+
+  To recover the losses, summaries or update_ops created by the clone use:
+  ```python
+    losses = tf.get_collection(tf.GraphKeys.LOSSES, clone.scope)
+    summaries = tf.get_collection(tf.GraphKeys.SUMMARIES, clone.scope)
+    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, clone.scope)
+  ```
+
+  The deployment options are specified by the config object and support
+  deploying one or several clones on different GPUs and one or several replicas
+  of such clones.
+
+  The `clone_fn` of training is called `config.num_clones` times to create the
+  training clones.
+
+  If `config` specifies deployment on multiple replicas then the default
+  tensorflow device is set appropriatly for each call to `model_fn` and for the
+  slim variable creation functions: model and global variables will be created
+  on the `ps` device, the clone operations will be on the `worker` device.
+
+  Args:
+    config: A DeploymentConfig object.
+    network_fn_list: A list of network function which length should be 2; [train_network_fn, eval_network_fn]
+    batch_queue_list: A list of batch queues which length should be 2; [train_batch_queue, eval_batch_queue]
+    loss_fn: The loss function; Default slim.losses.softmax_cross_entropy
+
+  Returns:
+    A list of namedtuples `Clone`.
+  """
+  def clone_fn(network_fn, batch_queue, scope_name):
+    """Allows data parallelism by creating multiple clones of network_fn."""
+    images, labels = batch_queue.dequeue()
+    logits, end_points = network_fn(images)
+    #############################
+    # Specify the loss function #
+    #############################
+    if 'AuxLogits' in end_points:
+      loss_fn(
+          end_points['AuxLogits'], labels,
+          label_smoothing=label_smoothing, weights=0.4,
+          scope='{}/aux_loss'.format(scope_name))
+    loss_fn(
+        logits, labels, label_smoothing=label_smoothing, weights=1.0,
+        scope=scope_name)
+    return end_points
+
+  clones = []
+  
+  if len(network_fn_list) != 2 or len(batch_queue_list) != 2:
+    raise ValueError("Miss train/eval_network_fn or train/eval_batch_queue")
+  
+  train_network_fn = network_fn_list[MODE_MAP['train']]
+  train_batch_queue = batch_queue_list[MODE_MAP['train']]
+  eval_network_fn = network_fn_list[MODE_MAP['eval']]
+  eval_batch_queue = batch_queue_list[MODE_MAP['eval']]
+
+  with slim.arg_scope([slim.model_variable, slim.variable],
+                      device=config.variables_device()):
+    # Create train clones and an eval clone seperatelly.
+    for i in range(0, config.num_clones):
       with tf.name_scope(config.clone_scope(i)) as clone_scope:
         clone_device = config.clone_device(i)
         with tf.device(clone_device):
-          with tf.variable_scope(tf.get_variable_scope(),
-                                 reuse=True if i > 0 else None):
-            outputs = model_fn(*args, **kwargs)
-          clones.append(Clone(outputs, clone_scope, clone_device))
+          with tf.variable_scope(tf.get_variable_scope(), 
+                                  reuse=True if i > 0 else None):
+            if i < config.num_clones - 1:
+              # create "config.num_clones" train_clones
+              outputs = clone_fn(train_network_fn, train_batch_queue, 'train')
+              clones.append(Clone(outputs, "training/{}".format(clone_scope), clone_device))
+            else:
+              # Create an eval clone
+              outputs = clone_fn(train_network_fn, train_batch_queue, 'eval')
+              clones.append(Clone(outputs, "eval/{}".format(clone_scope), clone_device))
   return clones
 
 
@@ -612,7 +702,7 @@ class DeploymentConfig(object):
     """
     if clone_index >= self._num_clones:
       raise ValueError('clone_index must be less than num_clones')
-    scope = ''
+    scope = 'clone_0'
     if self._num_clones > 1:
       scope = 'clone_%d' % clone_index
     return scope

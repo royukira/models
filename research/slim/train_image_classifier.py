@@ -82,6 +82,12 @@ tf.app.flags.DEFINE_integer(
     'save_interval_secs', 600,
     'The frequency with which the model is saved, in seconds.')
 
+# New Params
+tf.app.flags.DEFINE_integer(
+  'validation_interval_steps', 1000,
+  'The frequency with which the model is validated, in steps.'
+)
+
 tf.app.flags.DEFINE_integer(
     'task', 0, 'Task id of the replica running the training.')
 
@@ -149,7 +155,7 @@ tf.app.flags.DEFINE_string(
     'learning_rate_decay_type',
     'exponential',
     'Specifies how the learning rate is decayed. One of "fixed", "exponential",'
-    '"polynomial" or "cosine_decay_with_warmup"')
+    '"polynomial" or "cosine_decay_with_warmup"(new) ')
 
 tf.app.flags.DEFINE_float(
     'learning_rate', 0.01, 
@@ -185,11 +191,13 @@ tf.app.flags.DEFINE_float(
     'The decay to use for the moving average.'
     'If left as None, then moving averages are not used.')
 
+# New Param
 tf.app.flags.DEFINE_float(
     'warmup_learning_rate', 0.01,
     'Initial learning rate for warm up (Only for cosine_with_warmup)'
 )
 
+# New Param
 tf.app.flags.DEFINE_integer(
     'warmup_steps', 1000,
     'Number of warmup steps. (Only for cosine_with_warmup)'
@@ -224,14 +232,16 @@ tf.app.flags.DEFINE_string(
 tf.app.flags.DEFINE_integer(
     'batch_size', 32, 'The number of samples in each batch.')
 
+# New param
 tf.app.flags.DEFINE_integer(
-    'eval_batch_size', 32, 'The number of samples in each batch.')
+    'eval_batch_size', 100, 'The number of samples in each batch.')
 
 tf.app.flags.DEFINE_integer(
     'train_image_size', None, 'Train image size')
 
+# New param
 tf.app.flags.DEFINE_integer(
-    'eval_image_size', None, 'eval image size')
+    'eval_image_size', 300, 'eval image size')
 
 tf.app.flags.DEFINE_integer('max_number_of_steps', 200000,
                             'The maximum number of training steps.')
@@ -440,11 +450,8 @@ def main(_):
     #######################
     # Config model_deploy #
     #######################
-    custom_num_clones = FLAGS.num_clones
-    if FLAGS.dataset_split_name == "train_eval":
-      custom_num_clones += 1
     deploy_config = model_deploy.DeploymentConfig(
-        num_clones=custom_num_clones,
+        num_clones=FLAGS.num_clones,
         clone_on_cpu=FLAGS.clone_on_cpu,
         replica_id=FLAGS.task,
         num_replicas=FLAGS.worker_replicas,
@@ -525,7 +532,7 @@ def main(_):
           provider = slim.dataset_data_provider.DatasetDataProvider(
             dataset,
             num_readers=FLAGS.num_readers,
-            common_queue_capacity=FLAGS.eval_batch_size,
+            common_queue_capacity=2*FLAGS.eval_batch_size,
             common_queue_min=FLAGS.eval_batch_size)
         # 获取数据，获取到的数据是单个数据，还需要对数据进行预处理，组合数据
         # provider.get(): Returns a list of tensors specified by the given list of items
@@ -555,7 +562,7 @@ def main(_):
             [image, label],
             batch_size=FLAGS.eval_batch_size,
             num_threads=FLAGS.num_preprocessing_threads,
-            capacity=FLAGS.eval_batch_size)
+            capacity=2*FLAGS.eval_batch_size)
           labels = slim.one_hot_encoding(
             labels, dataset.num_classes - FLAGS.labels_offset)  # 算 validation loss 用到
           batch_queue = slim.prefetch_queue.prefetch_queue(
@@ -602,49 +609,60 @@ def main(_):
                                             'train']
                                           )
     elif FLAGS.dataset_split_name == "train_eval":
+      # clone_fn definded in create_train_eval_clones() 
       clones =model_deploy.create_train_eval_clones(deploy_config,
                                                     network_fn_list,
                                                     batch_queue_list)
-    
-    assert(FLAGS.dataset_split_name == "train_eval" and 
-            len(clones) == (FLAGS.num_clones + 1))
-    
-    train_clones = clones[0:FLAGS.num_clones]
-    if FLAGS.dataset_split_name == "train_eval":
-      eval_clones = clones[-1]
     else:
-      eval_clones = []
+      raise ValueError("Only for train or train_eval")
+
+    input("Continue...")
 
     #  clone scope format: "training/clone_i" or "eval/clone_(n-1)"                                         
-    train_first_clone_scope = "training/{}".format(deploy_config.clone_scope(0))
-    eval_first_clone_scope = None
+    first_clone_scope = "training/{}".format(deploy_config.clone_scope(0))
     if FLAGS.dataset_split_name == "train_eval":
-      eval_first_clone_scope = "eval/{}".format(deploy_config.clone_scope(custom_num_clones - 1))
+      first_clone_scope = "train_eval/{}".format(deploy_config.clone_scope(0))
+    
+    print(first_clone_scope)
     
     # Gather update_ops from the first clone. These contain, for example,
     # the updates for the batch_norm variables created by network_fn.
-    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, train_first_clone_scope)
+    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, first_clone_scope)
 
     # Add summaries for end_points (dict).
-    end_points = train_clones[0].outputs
+    end_points = clones[0].outputs
+    train_end_points = {}
     eval_end_points = {}
-    if FLAGS.dataset_split_name == "train_eval":
-      eval_end_points = eval_clones[0].outputs
+    if FLAGS.dataset_split_name == "train_eval" and isinstance(end_points, list):
+      train_end_points = end_points[0]
+      eval_end_points = end_points[1] 
+    else:
+      train_end_points = end_points
 
-    for end_point in end_points:
-      x = end_points[end_point]
+    print(train_end_points.keys())
+    print("===================================")
+    print(eval_end_points.keys())
+
+    for end_point in train_end_points:
+      x = train_end_points[end_point]
       summaries.add(tf.summary.histogram('activations/' + end_point, x))
       summaries.add(tf.summary.scalar('sparsity/' + end_point,
                                       tf.nn.zero_fraction(x)))
 
     # Add summaries for losses.
-    val_losses_list = []
-    for loss in tf.get_collection(tf.GraphKeys.LOSSES, train_first_clone_scope):
-      summaries.add(tf.summary.scalar('training/losses/%s' % loss.op.name, loss))
+    print(">> Total losses in {}: {}".format(first_clone_scope, 
+                                              len(tf.get_collection(
+                                                tf.GraphKeys.LOSSES, first_clone_scope)
+                                                )))
+
     if FLAGS.dataset_split_name == "train_eval":
-      for loss in tf.get_collection(tf.GraphKeys.LOSSES, eval_first_clone_scope):
-        summaries.add(tf.summary.scalar('validation/losses/%s' % loss.op.name, loss))
-        val_losses_list.append(loss)
+      for loss in tf.get_collection(tf.GraphKeys.LOSSES, first_clone_scope):
+        summaries.add(tf.summary.scalar('train_eval/losses/%s' % loss.op.name, loss))
+    elif FLAGS.dataset_split_name == "train":
+      for loss in tf.get_collection(tf.GraphKeys.LOSSES, first_clone_scope):
+        summaries.add(tf.summary.scalar('training/losses/%s' % loss.op.name, loss))
+    else:
+      raise ValueError("Only for train or train_eval")
 
     # Add summaries for variables.
     for variable in slim.get_model_variables():
@@ -667,7 +685,10 @@ def main(_):
     # Configure the optimization procedure. #
     #########################################
     with tf.device(deploy_config.optimizer_device()):
-      learning_rate = _configure_learning_rate(dataset.num_samples, global_step)
+      print(">> Num of Training dataset samples: {}".format(dataset_list[MODE_MAP['train']].num_samples))
+      input("Continues...")
+      learning_rate = _configure_learning_rate(dataset_list[MODE_MAP['train']].num_samples, 
+                                                global_step)
       optimizer = _configure_optimizer(learning_rate)
       summaries.add(tf.summary.scalar('learning_rate', learning_rate))
 
@@ -688,12 +709,25 @@ def main(_):
     variables_to_train = _get_variables_to_train()
 
     #  and returns a train_tensor and summary_op
-    total_loss, clones_gradients = model_deploy.optimize_clones(
-        train_clones,
-        optimizer,
-        var_list=variables_to_train)
+    if FLAGS.dataset_split_name == "train_eval":  
+      total_loss, clones_gradients, eval_total_loss = model_deploy.optimize_train_eval_clones(
+          clones,
+          optimizer,
+          var_list=variables_to_train)
+    elif FLAGS.dataset_split_name == "train":
+      total_loss, clones_gradients = model_deploy.optimize_clones(
+          clones,
+          optimizer,
+          var_list=variables_to_train)
+    else:
+      raise ValueError("Only for train or train_eval")
+
+    input("Continue...")
+
     # Add total_loss to summary.
     summaries.add(tf.summary.scalar('total_loss', total_loss))
+    if FLAGS.dataset_split_name == "train_eval":
+      summaries.add(tf.summary.scalar('eval_total_loss', eval_total_loss))
 
     # Create gradient updates.
     grad_updates = optimizer.apply_gradients(clones_gradients, 
@@ -706,7 +740,7 @@ def main(_):
 
     # Add the summaries from the first clone. These contain the summaries
     # created by model_fn and either optimize_clones() or _gather_clone_loss().
-    summaries |= set(tf.get_collection(tf.GraphKeys.SUMMARIES, train_first_clone_scope))
+    summaries |= set(tf.get_collection(tf.GraphKeys.SUMMARIES, first_clone_scope))
 
     # Merge all summaries together.
     summary_op = tf.summary.merge(list(summaries), name='summary_op')
@@ -717,10 +751,11 @@ def main(_):
     # TODO: Evaluation during training
     # Refer to: 
     # https://stackoverflow.com/questions/48898117/how-do-you-run-a-validation-loop-during-slim-learning-train
-
+    # Override the train_step_fn function defined in slim.learning.train()
     def train_step_fn(sess, train_op, global_step, train_step_kwargs):
       if hasattr(train_step_fn, 'step'):
         train_step_fn.step += 1
+        #print(">> Train_step_fn.step: {}".format(train_step_fn.step))
       else:
         train_step_fn.step = global_step.eval(sess)
       
@@ -729,13 +764,16 @@ def main(_):
                                                           train_op, 
                                                           global_step, 
                                                           train_step_kwargs)
-      # Eval on interval
-      if train_step_fn.step and train_step_fn.step % FLAGS.validation_interval == 0:
-        val_losses_out = sess.run(val_losses_list)
+
+      # # Eval on interval
+      if train_step_fn.step and (train_step_fn.step % FLAGS.validation_interval_steps == 0):
+        print(">> Start to validation...")
+        val_loss_out = sess.run([eval_total_loss])
         print(">> Global step: {}; Validation losses: {}".format(
           train_step_fn.step,
-          val_losses_out
+          val_loss_out
         ))
+      
       return [total_loss, should_stop]
 
     if FLAGS.dataset_split_name == "train_eval":

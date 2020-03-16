@@ -17,6 +17,7 @@ _FILE_PATTERN = '%s.record'  # train.record or dev.record
 _SPLITS_TO_SIZES = {
     'train': 23763,
     'dev': 1321,
+    'test': 1320,
 }
 
 _ITEMS_TO_DESCRIPTIONS = {

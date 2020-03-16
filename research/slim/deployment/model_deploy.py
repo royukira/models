@@ -199,6 +199,7 @@ def create_clones(config, model_fn, args=None, kwargs=None):
           clones.append(Clone(outputs, clone_scope, clone_device))
   return clones
 
+
 def create_train_eval_clones(config, network_fn_list, batch_queue_list,
                               label_smoothing=0.0,
                               loss_fn=slim.losses.softmax_cross_entropy):
@@ -239,24 +240,37 @@ def create_train_eval_clones(config, network_fn_list, batch_queue_list,
   Returns:
     A list of namedtuples `Clone`.
   """
-  def clone_fn(network_fn, batch_queue, scope_name):
-    """Allows data parallelism by creating multiple clones of network_fn."""
-    images, labels = batch_queue.dequeue()
-    logits, end_points = network_fn(images)
+  def train_eval_clone_fn(train_network_fn, eval_network_fn, 
+                          train_batch_queue, eval_batch_queue):
+    train_images, train_labels = train_batch_queue.dequeue()
+    eval_images, eval_labels = eval_batch_queue.dequeue()
+    with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
+      train_logits, train_end_points = train_network_fn(train_images)
+      eval_logits, eval_end_points = eval_network_fn(eval_images)
     #############################
     # Specify the loss function #
     #############################
-    if 'AuxLogits' in end_points:
+    if 'AuxLogits' in train_end_points:
       loss_fn(
-          end_points['AuxLogits'], labels,
+          train_end_points['AuxLogits'], train_labels,
           label_smoothing=label_smoothing, weights=0.4,
-          scope='{}/aux_loss'.format(scope_name))
+          scope='{}/aux_loss'.format('train'))
     loss_fn(
-        logits, labels, label_smoothing=label_smoothing, weights=1.0,
-        scope=scope_name)
-    return end_points
+        train_logits, train_labels, label_smoothing=label_smoothing, weights=1.0,
+        scope='train')
+    
+    if 'AuxLogits' in eval_end_points:
+      loss_fn(
+          eval_end_points['AuxLogits'], eval_labels,
+          label_smoothing=label_smoothing, weights=0.4,
+          scope='{}/aux_loss'.format('eval'))
+    loss_fn(
+        eval_logits, eval_labels, label_smoothing=label_smoothing, weights=1.0,
+        scope='eval')
+    
+    return [train_end_points, eval_end_points]
 
-  clones = []
+  train_eval_clones = []
   
   if len(network_fn_list) != 2 or len(batch_queue_list) != 2:
     raise ValueError("Miss train/eval_network_fn or train/eval_batch_queue")
@@ -270,21 +284,19 @@ def create_train_eval_clones(config, network_fn_list, batch_queue_list,
                       device=config.variables_device()):
     # Create train clones and an eval clone seperatelly.
     for i in range(0, config.num_clones):
-      with tf.name_scope(config.clone_scope(i)) as clone_scope:
-        clone_device = config.clone_device(i)
+      # g = tf.Graph()
+      with tf.name_scope("train_eval/{}".format(config.clone_scope(i))) as clone_scope:
+        clone_device = config.clone_device(i)  # get device name, like "device:GPU:i"
         with tf.device(clone_device):
-          with tf.variable_scope(tf.get_variable_scope(), 
-                                  reuse=True if i > 0 else None):
-            if i < config.num_clones - 1:
-              # create "config.num_clones" train_clones
-              outputs = clone_fn(train_network_fn, train_batch_queue, 'train')
-              clones.append(Clone(outputs, "training/{}".format(clone_scope), clone_device))
-            else:
-              # Create an eval clone
-              outputs = clone_fn(train_network_fn, train_batch_queue, 'eval')
-              clones.append(Clone(outputs, "eval/{}".format(clone_scope), clone_device))
-  return clones
+          # create "config.num_clones" train_eval_clones
+          # outputs contains "train_end_points" and "eval_end_points"
+          outputs = train_eval_clone_fn(train_network_fn, eval_network_fn, train_batch_queue, eval_batch_queue)
+          train_eval_clones.append(Clone(outputs, clone_scope, clone_device))
+          print("[{}] Successfully added {} into clones list".format(clone_device, clone_scope))
+  return train_eval_clones
 
+
+# ======== Optimizer for normal train_clones ===================
 
 def _gather_clone_loss(clone, num_clones, regularization_losses):
   """Gather the loss for a single clone.
@@ -398,6 +410,149 @@ def optimize_clones(clones, optimizer,
   # Sum the gradients across clones.
   grads_and_vars = _sum_clones_gradients(grads_and_vars)
   return total_loss, grads_and_vars
+
+
+# ======== Optimizer for train_eval_clones ===================
+def _gather_train_eval_clone_loss(clone, num_clones, regularization_losses):
+  """Gather the loss for a single clone.
+
+  Args:
+    clone: A Clone namedtuple.
+    num_clones: The number of clones being deployed.
+    regularization_losses: Possibly empty list of regularization_losses
+      to add to the clone losses.
+
+  Returns:
+    -- sum_loss: A tensor for the total loss for the clone.  Can be None.
+    -- eval_clone_loss: A tensor for the validation loss of the clone. Can be None.
+  """
+  # The return value.
+  sum_loss = None
+  # Individual components of the loss that will need summaries.
+  train_clone_loss = None
+  regularization_loss = None
+  eval_clone_loss = None
+  # Compute and aggregate losses on the clone device.
+  with tf.device(clone.device):
+    train_losses = []
+    eval_losses = []
+    optimize_losses = []
+    clone_losses = tf.get_collection(tf.GraphKeys.LOSSES, clone.scope)
+    print(">> Clone scope: {}".format(clone.scope))
+    if clone_losses:
+      for loss in clone_losses:
+        if loss.op.name.split(clone.scope)[-1] == "train/value":
+          print('>> train_eval/losses/%s' % loss.op.name)
+          train_losses.append(loss)
+        elif loss.op.name.split(clone.scope)[-1] == "eval/value":
+          print('>. train_eval/losses/%s' % loss.op.name)
+          eval_losses.append(loss)
+        else:
+          raise ValueError("the loss.op.name '{}' has wrong format.".format(loss.op.name))
+      train_clone_loss = tf.add_n(train_losses, name='train_clone_loss')
+      eval_clone_loss = tf.add_n(eval_losses, name='eval_clone_loss')
+      if num_clones > 1:
+        train_clone_loss = tf.div(train_clone_loss, 1.0 * num_clones,
+                            name='scaled_train_clone_loss')
+        eval_clone_loss = tf.div(eval_clone_loss, 1.0 * num_clones,
+                            name='scaled_eval_clone_loss')
+      # only optimize with training loss
+      optimize_losses.append(train_clone_loss)
+    if regularization_losses:
+      regularization_loss = tf.add_n(regularization_losses,
+                                     name='regularization_loss')
+      optimize_losses.append(regularization_loss)
+    if optimize_losses:
+      sum_loss = tf.add_n(optimize_losses)
+  # Add the summaries out of the clone device block.
+  if train_clone_loss is not None:
+    tf.summary.scalar('/'.join(filter(None,
+                                      ['Losses', clone.scope, 'train_clone_loss'])),
+                      train_clone_loss)
+  if eval_clone_loss is not None:
+    tf.summary.scalar('/'.join(filter(None,
+                                      ['Losses', clone.scope, 'eval_clone_loss'])),
+                      eval_clone_loss)
+  if regularization_loss is not None:
+    tf.summary.scalar('Losses/regularization_loss', regularization_loss)
+  return sum_loss, eval_clone_loss
+
+
+def _optimize_train_eval_clone(optimizer, clone, num_clones, regularization_losses,
+                                **kwargs):
+  """Compute losses and gradients for a single clone.
+
+  Args:
+    optimizer: A tf.Optimizer  object.
+    clone: A Clone namedtuple.
+    num_clones: The number of clones being deployed.
+    regularization_losses: Possibly empty list of regularization_losses
+      to add to the clone losses.
+    **kwargs: Dict of kwarg to pass to compute_gradients().
+
+  Returns:
+    A tuple (clone_loss, clone_grads_and_vars, eval_loss).
+      - clone_loss: A tensor for the total loss for the clone.  Can be None.
+      - clone_grads_and_vars: List of (gradient, variable) for the clone.
+        Can be empty.
+      - eval_loss: A tensor for the validation loss of the clone. Can be None.
+  """
+  sum_loss, eval_loss = _gather_train_eval_clone_loss(clone, num_clones, regularization_losses)
+  clone_grad = None
+  if sum_loss is not None:
+    with tf.device(clone.device):
+      clone_grad = optimizer.compute_gradients(sum_loss, **kwargs)
+  return sum_loss, clone_grad, eval_loss
+
+
+def optimize_train_eval_clones(clones, optimizer,
+                              regularization_losses=None,
+                              **kwargs):
+  """Compute clone losses and gradients for the given list of `Clones`.
+
+  Note: The regularization_losses are added to the first clone losses.
+
+  Args:
+   clones: List of `Clones` created by `create_clones()`.
+   optimizer: An `Optimizer` object.
+   regularization_losses: Optional list of regularization losses. If None it
+     will gather them from tf.GraphKeys.REGULARIZATION_LOSSES. Pass `[]` to
+     exclude them.
+   **kwargs: Optional list of keyword arguments to pass to `compute_gradients`.
+
+  Returns:
+   A tuple (total_loss, grads_and_vars).
+     - total_loss: A Tensor containing the average of the clone losses including
+       the regularization loss.
+     - grads_and_vars: A List of tuples (gradient, variable) containing the sum
+       of the gradients for each variable.
+
+  """
+  grads_and_vars = []
+  clones_losses = []
+  eval_clones_losses = []
+  num_clones = len(clones)
+  if regularization_losses is None:
+    regularization_losses = tf.get_collection(
+        tf.GraphKeys.REGULARIZATION_LOSSES)
+  for clone in clones:
+    with tf.name_scope(clone.scope):
+      clone_loss, clone_grad, eval_loss = _optimize_train_eval_clone(
+          optimizer, clone, num_clones, regularization_losses, **kwargs)
+      if clone_loss is not None:
+        clones_losses.append(clone_loss)
+        grads_and_vars.append(clone_grad)
+      if eval_loss is not None:
+        eval_clones_losses.append(eval_loss)
+      # Only use regularization_losses for the first clone
+      regularization_losses = None
+  # Compute the total_loss summing all the clones_losses.
+  total_loss = tf.add_n(clones_losses, name='total_loss')
+  # Sum the gradients across clones.
+  grads_and_vars = _sum_clones_gradients(grads_and_vars)
+  # Compute the eval_total_loss summing all the eval_clones_losses.
+  eval_total_loss = tf.add_n(eval_clones_losses, name='eval_total_loss')
+  return total_loss, grads_and_vars, eval_total_loss
 
 
 def deploy(config,
@@ -686,6 +841,26 @@ class DeploymentConfig(object):
       device += '/device:CPU:0'
     else:
       device += '/device:GPU:%d' % clone_index
+    return device
+  
+  def clone_CPU_device(self, clone_index):
+    """CPU Device used to create the clone and all the ops inside the clone.
+
+    Args:
+      clone_index: Int, representing the clone_index.
+
+    Returns:
+      A value suitable for `tf.device()`.
+
+    Raises:
+      ValueError: if `clone_index` is greater or equal to the number of clones".
+    """
+    if clone_index >= self._num_clones:
+      raise ValueError('clone_index must be less than num_clones')
+    device = ''
+    if self._num_ps_tasks > 0:
+      device += self._worker_device
+    device += '/device:CPU:%d' % clone_index
     return device
 
   def clone_scope(self, clone_index):

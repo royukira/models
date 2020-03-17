@@ -286,7 +286,7 @@ def create_train_eval_clones(config, network_fn_list, batch_queue_list,
     for i in range(0, config.num_clones):
       # g = tf.Graph()
       with tf.name_scope("train_eval/{}".format(config.clone_scope(i))) as clone_scope:
-        clone_device = config.clone_device(i)  # get device name, like "device:GPU:i"
+        clone_device = config.clone_device(i)  # get device name, like "/device:GPU:i"
         with tf.device(clone_device):
           # create "config.num_clones" train_eval_clones
           # outputs contains "train_end_points" and "eval_end_points"

@@ -542,8 +542,10 @@ def main(_):
         if i == MODE_MAP['train']:
           # Training set
           train_image_size = FLAGS.train_image_size or network_fn_list[MODE_MAP['train']].default_image_size
+          # Pre-processing a single image
           image = image_preprocessing_fn(image, train_image_size, train_image_size)
           print("Training dataset: image shape: {}".format(image.shape))
+          # batch images
           images, labels = tf.train.batch(
             [image, label],
             batch_size=FLAGS.batch_size,    # training set batch size
@@ -551,6 +553,7 @@ def main(_):
             capacity=5 * FLAGS.batch_size)
           labels = slim.one_hot_encoding(
             labels, dataset.num_classes - FLAGS.labels_offset)
+          # assemble the batch
           batch_queue = slim.prefetch_queue.prefetch_queue(
             [images, labels], capacity=2 * deploy_config.num_clones)
         elif i == MODE_MAP['eval']:
@@ -630,6 +633,7 @@ def main(_):
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, first_clone_scope)
 
     # Add summaries for end_points (dict).
+    # end_points = [train_end_points, eval_end_points] in 'train_eval' mode
     end_points = clones[0].outputs
     train_end_points = {}
     eval_end_points = {}

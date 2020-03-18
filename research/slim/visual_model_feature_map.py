@@ -45,7 +45,8 @@ tf.app.flags.DEFINE_string(
     'dataset_split_name', 'test', 'The name of the train/test split.')
 
 tf.app.flags.DEFINE_string(
-    'dataset_dir', '/roy_work/Classification/data/pci_HeadHat_dav4_cls', 'The directory where the dataset files are stored.')
+    'dataset_dir', '/roy_work/Classification/data/pci_HeadHat_dav4_cls', 
+    'The directory where the dataset files are stored.')
 
 tf.app.flags.DEFINE_integer(
     'labels_offset', 0,
@@ -93,12 +94,6 @@ tf.app.flags.DEFINE_integer(
 )
 
 FLAGS = tf.app.flags.FLAGS
-
-VISUAL_MAP_FN = {
-    'sum': absolute_sum,
-    'p_power_sum': absolute_p_power_sum,
-    'p_power_max': absolute_p_power_max,
-}
 
 
 # Visual map fn
@@ -166,82 +161,119 @@ def absolute_p_power_max(feature_maps):
 
 
 # Visualize 
-def _py_mask_with_heatmap(image, label, heatmap):
+def _py_get_rgb_heatmap(image, label, predict, heatmap):
     """
     Mask an image with a heatmap in numpy way
     Note: This function need to be called by tf.py_func()
 
     Arg:
-        -- image: a RGB image, type: np.array
-        -- heatmap: a single-channel image, type: np.array
+        -- image: a RGB image(distorted), type: np.array, 3D
+        -- heatmap: a single-channel image, type: np.array, 2D
     Return:
-        A masked image, type: np.array 
+        A masked image, type: np.array, 3D
     """
-    if (len(image.shape) != 3) or (len(heatmap.shape) != 3):
+    if (len(image.shape) != 3) or (len(heatmap.shape) != 2):
         raise ValueError("The shape of image/heatmap is illegal.")
     
-    intensity = 0.5
     heatmap = cv2.resize(heatmap, (image.shape[1], image.shape[0]))
-    heatmap = cv2.applyColorMap(np.uint8(255 * heatmap), cv2.COLORMAP_JET)  
-    masked_img = image + intensity * heatmap
+    heatmap = cv2.applyColorMap(np.uint8(255 * heatmap), cv2.COLORMAP_JET)  #  output is a 3-channel rgb image
+    heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+    heatmap = cv2.putText(heatmap, "gt:{}".format(str(label)), (0, 30), 
+                             cv2.FONT_HERSHEY_SIMPLEX,
+                             1,
+                             (255, 255, 255),
+                             2,
+                             cv2.LINE_AA)
+    heatmap = cv2.putText(heatmap, "predict:{}".format(str(predict)), (0, 60), 
+                             cv2.FONT_HERSHEY_SIMPLEX,
+                             1,
+                             (0, 0, 0),
+                             2,
+                             cv2.LINE_AA)
 
-    return cv2.putText(masked_img, str(label), (0, 30), 
-                       cv2.FONT_HERSHEY_SIMPLEX,
-                       1,
-                       (0, 0, 255),
-                       2,
-                       cv2.LINE_AA)
+    return heatmap
 
 
-def _mask_with_heatmap(image, label, heatmap, scope_name):
+def _mask_with_heatmap(image, label, predict, heatmap, scope_name, summaries=None):
     """
     Mask an image with a heatmap
 
     Arg:
         -- image: A 3D tensor of [H, W, 3]
         -- label: A tf.int64 tensor
-        -- heatmap: A 3D tensor of [H, W, 1] or a 2D tensor of [H, W]
+        -- heatmap: a 2D tensor of [H, W]
         -- scope_name: the scope name of the variable
     Return:
         A masked image which is a 3D tensor of [H, W, 3]
     """
-    if len(heatmap.shape) != 3:
-        if len(heatmap.shape) == 2:
-            heatmap = tf.expand_dims(heatmap, axis=2)
-        else:
-            raise ValueError("The shape:{} of heatmap tensor is illegal.".format(heatmap.shape))
+    if len(heatmap.shape) != 2:
+        raise ValueError("The shape:{} of heatmap tensor is illegal.".format(heatmap.shape))
 
     with tf.name_scope('heatmap/{}'.format(scope_name)):
+        if summaries is not None:
+            summaries.add(tf.summary.image('rgb_image', tf.expand_dims(image, axis=0)))
         # Normalize the heatmap between 0 and 1
-        norm_heatmap = heatmap / tf.reduce_max(heatmap) 
-        tf.summary.image('norm_heatmap', tf.cast(norm_heatmap * 255, tf.int8))
+        norm_heatmap = heatmap / tf.reduce_max(heatmap)
+        # The summary needs a 4D tensor [1,h,w,1]
+        summary_norm_heatmap = tf.expand_dims(tf.expand_dims(tf.cast(norm_heatmap * 255, tf.uint8),
+                                                    axis=2),
+                                              axis=0
+                                             )
+        if summaries is not None:
+            summaries.add(tf.summary.image('norm_heatmap', summary_norm_heatmap))
         # run py_func
-        masked_img = tf.py_func(_py_mask_with_heatmap, 
-                                [image, label, norm_heatmap], 
-                                tf.int8)
+        rgb_heatmap = tf.py_func(_py_get_rgb_heatmap, 
+                                [image, label, predict, norm_heatmap], 
+                                tf.uint8)
+
+        if summaries is not None:
+            summaries.add(tf.summary.image('rgb_heatmap', tf.expand_dims(rgb_heatmap, axis=0)))
+
+        # mask
+        intensity = 0.9
+        norm_rgb_heatmap = tf.cast(rgb_heatmap, tf.float32) / tf.reduce_max(tf.cast(rgb_heatmap, tf.float32))
+        masked_img = image + intensity * norm_rgb_heatmap
+        #masked_img = tf.cast(masked_img, tf.uint8)
+
         # Add to summary
-        tf.summary.image('masked_image', masked_img)
-        return masked_img
+        masked_img = tf.expand_dims(masked_img, axis=0)
+        if summaries is not None:
+            summaries.add(tf.summary.image('masked_image', masked_img))
+        return masked_img, summaries
 
 
-def masked_with_heatmap(images, labels, heatmaps_dict, batch_index=0):
+def masked_with_heatmap(images, labels, predicts, heatmaps_dict, summarise=None, batch_index=0):
+    """
+    Mask the specific image with the correspondiing heatmap
+    """
+    if len(labels.shape) == 2:
+        labels = tf.squeeze(labels)
+        
     image = images[batch_index]
     label = labels[batch_index]
-    
+    predict = predicts[batch_index]
+
     name_to_masked_img = {}
     for heatmap_name in heatmaps_dict.keys():
-        heatmap = heatmaps_dict[heatmap_name]
-        masked_img = _mask_with_heatmap(image, label, heatmap, heatmap_name)
+        heatmap = heatmaps_dict[heatmap_name][batch_index]
+        masked_img, summarise = _mask_with_heatmap(image, label, predict, heatmap, heatmap_name, summarise)
         name_to_masked_img[heatmap_name] = masked_img
     
-    return name_to_masked_img 
+    return name_to_masked_img, summarise
+
+
+VISUAL_MAP_FN = {
+    'sum': absolute_sum,
+    'p_power_sum': absolute_p_power_sum,
+    'p_power_max': absolute_p_power_max,
+}
 
 
 def main(_):
     if not FLAGS.dataset_dir:
         raise ValueError('You must supply the dataset directory with --dataset_dir')
     
-    if FLAGS.visual_scope:
+    if not FLAGS.visual_scope:
         raise ValueError('You must set the scopes of variables that you want to visualize')
 
     tf.logging.set_verbosity(tf.logging.INFO)
@@ -303,7 +335,7 @@ def main(_):
         # extract the end_points which are going to be visualized #
         ###########################################################
         visual_map_fn = VISUAL_MAP_FN[FLAGS.visual_map_fn]  # TODO: debug those fn
-        visual_endpoint_dict = {scope.stripi():None
+        visual_endpoint_dict = {scope.strip():None
                             for scope in FLAGS.visual_scope.split(',')}
         heatmap_dict = {}
         for end_point_scope in end_points.keys():
@@ -312,6 +344,17 @@ def main(_):
                 heatmap_dict[end_point_scope] = visual_map_fn(end_points[end_point_scope])
                 visual_endpoint_dict[end_point_scope] = end_points[end_point_scope]
         
+        if len(heatmap_dict.keys()) == 0:
+            print(end_points.keys())
+            print(visual_endpoint_dict)
+            print(heatmap_dict)
+            raise ValueError("No heatmap.")
+        
+        #print(end_points.keys())
+        print(visual_endpoint_dict)
+        print(heatmap_dict)
+        input("Continue...")
+
         if FLAGS.quantize:
             contrib_quantize.create_eval_graph()
 
@@ -327,18 +370,8 @@ def main(_):
         predictions = tf.argmax(logits, 1)
         labels = tf.squeeze(labels)   # [batch_size, ]
 
-        # Mask the image with heatmaps from different layers & add to summary
-        # Defaultly only visualize the first sample in a batch
-        scope_to_masked_img = masked_with_heatmap(images, labels, heatmap_dict)
-
         # Gather initial summaries.
         summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES))
-
-        # Add the masked images to summary
-        for scope_name, masked_img in scope_to_masked_img.items():
-            summary_name = 'visual/{}'.format(scope_name)
-            op = tf.summary.image(summary_name, masked_img)
-            summaries.add(op)
 
         # Define the metrics:
         names_to_values, names_to_updates = slim.metrics.aggregate_metric_map({
@@ -353,7 +386,20 @@ def main(_):
             op = tf.summary.scalar(summary_name, value, collections=[])
             op = tf.Print(op, [value], summary_name)
             summaries.add(op)
-            #tf.add_to_collection(tf.GraphKeys.SUMMARIES, op)
+
+        # Mask the image with heatmaps from different layers & add to summary
+        # Defaultly only visualize the first sample in a batch
+        scope_to_masked_img, summaries = masked_with_heatmap(images,
+                                                             labels,
+                                                             predictions,
+                                                             heatmap_dict,
+                                                             summarise=summaries)
+
+        # Add the masked images to summary
+        for scope_name, masked_img in scope_to_masked_img.items():
+            summary_name = 'visual/{}'.format(scope_name)
+            op = tf.summary.image(summary_name, masked_img)
+            summaries.add(op)
 
         # TODO(sguada) use num_epochs=1
         if FLAGS.max_num_batches:
@@ -369,10 +415,17 @@ def main(_):
 
         tf.logging.info('Evaluating %s' % checkpoint_path)
 
+        # Merge all summaries together.
+        summary_op = tf.summary.merge(list(summaries), name='summary_op')
+
         slim.evaluation.evaluate_once(
             master=FLAGS.master,
             checkpoint_path=checkpoint_path,
-            logdir=FLAGS.eval_dir,
+            logdir=FLAGS.visual_dir,
             num_evals=num_batches,
             eval_op=list(names_to_updates.values()),
+            summary_op=summary_op,
             variables_to_restore=variables_to_restore)
+
+if __name__ == "__main__":
+    tf.app.run()

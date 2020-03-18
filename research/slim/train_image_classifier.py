@@ -26,6 +26,7 @@ from datasets import dataset_factory
 from deployment import model_deploy
 from nets import nets_factory
 from preprocessing import preprocessing_factory
+from losses import loss_factory
 
 # cosine_decay_with_warmup need to be imported from object_detection API
 import sys
@@ -270,6 +271,16 @@ tf.app.flags.DEFINE_string(
 tf.app.flags.DEFINE_boolean(
     'ignore_missing_vars', False,
     'When restoring a checkpoint would ignore missing variables.')
+
+#######################
+# Loss function Flags #
+#######################
+
+tf.app.flags.DEFINE_string(
+    'loss_fn', 'softmax_ce',
+    'Choose a suitable loss function: softmax_ce, softmax_focal_loss'
+)
+
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -579,6 +590,11 @@ def main(_):
 
     input("Press any key to continue...")
 
+    ############################
+    # Select the loss function #
+    ############################
+    loss_fn = loss_factory.get_loss_fn(FLAGS.loss_fn)
+
     ####################
     # Define the model #
     ####################
@@ -591,11 +607,11 @@ def main(_):
       # Specify the loss function #
       #############################
       if 'AuxLogits' in end_points:
-        slim.losses.softmax_cross_entropy(
+        loss_fn(
             end_points['AuxLogits'], labels,
             label_smoothing=FLAGS.label_smoothing, weights=0.4,
             scope='{}/aux_loss'.format(scope_name))
-      slim.losses.softmax_cross_entropy(
+      loss_fn(
           logits, labels, label_smoothing=FLAGS.label_smoothing, weights=1.0,
           scope=scope_name)
       return end_points
@@ -615,7 +631,8 @@ def main(_):
       # clone_fn definded in create_train_eval_clones() 
       clones =model_deploy.create_train_eval_clones(deploy_config,
                                                     network_fn_list,
-                                                    batch_queue_list)
+                                                    batch_queue_list,
+                                                    loss_fn=loss_fn)
     else:
       raise ValueError("Only for train or train_eval")
 

@@ -439,12 +439,15 @@ def _gather_train_eval_clone_loss(clone, num_clones, regularization_losses):
     optimize_losses = []
     clone_losses = tf.get_collection(tf.GraphKeys.LOSSES, clone.scope)
     print(">> Clone scope: {}".format(clone.scope))
+    print(">> {}".format(clone_losses))
     if clone_losses:
       for loss in clone_losses:
-        if loss.op.name.split(clone.scope)[-1] == "train/value":
+        if loss.op.name.split(clone.scope)[-1] == "train/value" or \
+            loss.op.name.split(clone.scope)[-1] == "train/weighted_loss/value":
           print('>> train_eval/losses/%s' % loss.op.name)
           train_losses.append(loss)
-        elif loss.op.name.split(clone.scope)[-1] == "eval/value":
+        elif loss.op.name.split(clone.scope)[-1] == "eval/value" or \
+              loss.op.name.split(clone.scope)[-1] == "eval/weighted_loss/value":
           print('>. train_eval/losses/%s' % loss.op.name)
           eval_losses.append(loss)
         else:

@@ -140,14 +140,8 @@ def softmax_focal_loss(logits,
         gamma_power_factor = tf.pow(1.0 - p_t, gamma)
 
         # Calculate Focal loss: FL(p) = alpha_factor * gamma_pow_factor * standard_xentropy
-        print(per_entry_xentropy.shape)
-        print(alpha_factor.shape)
-        print(gamma_power_factor.shape)
-        input("continue")
         xentropy_focal_loss = -tf.reduce_sum(alpha_factor * gamma_power_factor * per_entry_xentropy,
                                              axis=1)
-        print(xentropy_focal_loss.shape)
-        input("continue")
         # Calculate weight focal loss
         if weights:
             return slim.loss_ops.compute_weighted_loss(

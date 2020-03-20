@@ -668,7 +668,7 @@ def main(_):
       x = train_end_points[end_point]
       summaries.add(tf.summary.histogram('activations/' + end_point, x))
       summaries.add(tf.summary.scalar('sparsity/' + end_point,
-                                      tf.nn.zero_fraction(x)))
+                                      tf.nn.zero_fraction(x)))  # Tensor中0元素在所有元素中所占的比例
 
     # Add summaries for losses.
     print(">> Total losses in {}: {}".format(first_clone_scope, 

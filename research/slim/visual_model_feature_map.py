@@ -242,24 +242,26 @@ def _mask_with_heatmap(image, label, predict, heatmap, scope_name, summaries=Non
         return masked_img, summaries
 
 
-def masked_with_heatmap(images, labels, predicts, heatmaps_dict, summarise=None, batch_index=0):
+def masked_with_heatmap(images, labels, predicts, heatmaps_dict, summarise=None, batch_index=[0]):
     """
     Mask the specific image with the correspondiing heatmap
     """
     if len(labels.shape) == 2:
         labels = tf.squeeze(labels)
-        
-    image = images[batch_index]
-    label = labels[batch_index]
-    predict = predicts[batch_index]
-
-    name_to_masked_img = {}
-    for heatmap_name in heatmaps_dict.keys():
-        heatmap = heatmaps_dict[heatmap_name][batch_index]
-        masked_img, summarise = _mask_with_heatmap(image, label, predict, heatmap, heatmap_name, summarise)
-        name_to_masked_img[heatmap_name] = masked_img
     
-    return name_to_masked_img, summarise
+    name_to_masked_img_list = []
+    for idx in batch_index:
+        image = images[batch_index]
+        label = labels[batch_index]
+        predict = predicts[batch_index]
+
+        name_to_masked_img = {}
+        for heatmap_name in heatmaps_dict.keys():
+            heatmap = heatmaps_dict[heatmap_name][batch_index]
+            masked_img, summarise = _mask_with_heatmap(image, label, predict, heatmap, heatmap_name, summarise)
+            name_to_masked_img[heatmap_name] = masked_img
+            name_to_masked_img_list.append(name_to_masked_img)
+    return name_to_masked_img_list, summarise
 
 
 VISUAL_MAP_FN = {
@@ -317,7 +319,11 @@ def main(_):
         eval_image_size = FLAGS.eval_image_size or network_fn.default_image_size
         
         # Pre-Processing a single image
-        image = image_preprocessing_fn(image, eval_image_size, eval_image_size)
+        #  [ymin, xmin, ymax, xmax]
+        box = tf.constant([0.2, 0.0, 0.75, 1.0],
+                         dtype=tf.float32,
+                         shape=[1, 1, 4])
+        image = image_preprocessing_fn(image, eval_image_size, eval_image_size, bbox=box)
         
         # batch images
         images, labels = tf.train.batch(
@@ -389,17 +395,17 @@ def main(_):
 
         # Mask the image with heatmaps from different layers & add to summary
         # Defaultly only visualize the first sample in a batch
-        scope_to_masked_img, summaries = masked_with_heatmap(images,
-                                                             labels,
-                                                             predictions,
-                                                             heatmap_dict,
-                                                             summarise=summaries)
+        _, summaries = masked_with_heatmap(images,
+                                           labels,
+                                           predictions,
+                                           heatmap_dict,
+                                           summarise=summaries)
 
         # Add the masked images to summary
-        for scope_name, masked_img in scope_to_masked_img.items():
-            summary_name = 'visual/{}'.format(scope_name)
-            op = tf.summary.image(summary_name, masked_img)
-            summaries.add(op)
+        # for scope_name, masked_img in scope_to_masked_img.items():
+        #     summary_name = 'visual/{}'.format(scope_name)
+        #     op = tf.summary.image(summary_name, masked_img)
+        #     summaries.add(op)
 
         # TODO(sguada) use num_epochs=1
         if FLAGS.max_num_batches:

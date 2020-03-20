@@ -263,6 +263,7 @@ def preprocess_for_train(image,
 def preprocess_for_eval(image,
                         height,
                         width,
+                        bbox=None,
                         central_fraction=0.875,
                         scope=None,
                         central_crop=True,
@@ -282,6 +283,9 @@ def preprocess_for_eval(image,
       int(8/16/32) data type (see `tf.image.convert_image_dtype` for details).
     height: integer
     width: integer
+    bbox: 3-D float Tensor of bounding boxes arranged [1, num_boxes, coords]
+      where each coordinate is [0, 1) and the coordinates are arranged
+      as [ymin, xmin, ymax, xmax].
     central_fraction: Optional Float, fraction of the image to crop.
     scope: Optional scope for name_scope.
     central_crop: Enable central cropping of images during preprocessing for
@@ -291,6 +295,12 @@ def preprocess_for_eval(image,
     3-D float Tensor of prepared image.
   """
   with tf.name_scope(scope, 'eval_image', [image, height, width]):
+    if bbox != None:
+      distorted_image, distorted_bbox = distorted_bounding_box_crop(image, bbox,
+                                                                    area_range=(0.7, 1.0)
+                                                                    )
+      distorted_image.set_shape([None, None, 3])
+      image = distorted_image
     if image.dtype != tf.float32:
       image = tf.image.convert_image_dtype(image, dtype=tf.float32)
     if use_grayscale:
@@ -362,5 +372,6 @@ def preprocess_image(image,
         image,
         height,
         width,
+        bbox=bbox,
         central_crop=crop_image,
         use_grayscale=use_grayscale)

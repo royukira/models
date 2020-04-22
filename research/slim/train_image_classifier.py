@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Generic training script that trains a model using a given dataset."""
-
+"""Generic training script that trains a model using a given dataset.
+Now the script can do evaluation loop in training loop. Written be Roy.
+"""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -238,11 +239,11 @@ tf.app.flags.DEFINE_integer(
     'eval_batch_size', 100, 'The number of samples in each batch.')
 
 tf.app.flags.DEFINE_integer(
-    'train_image_size', None, 'Train image size')
+    'train_image_size', 224, 'Train image size')
 
 # New param
 tf.app.flags.DEFINE_integer(
-    'eval_image_size', 300, 'eval image size')
+    'eval_image_size', 224, 'eval image size')
 
 tf.app.flags.DEFINE_integer('max_number_of_steps', 200000,
                             'The maximum number of training steps.')
@@ -382,6 +383,8 @@ def _configure_optimizer(learning_rate):
         epsilon=FLAGS.opt_epsilon)
   elif FLAGS.optimizer == 'sgd':
     optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+  elif FLAGS.optimizer == 'adamw':
+    optimizer = None  # TODO: add AdamW optimizer 
   else:
     raise ValueError('Optimizer [%s] was not recognized' % FLAGS.optimizer)
   return optimizer
@@ -413,6 +416,8 @@ def _get_init_fn():
                   for scope in FLAGS.checkpoint_exclude_scopes.split(',')]
 
   # TODO(sguada) variables.filter_variables()
+  print(">> Exclusive layer: {}".format(exclusions))
+  input("Continue...")
   variables_to_restore = []
   for var in slim.get_model_variables():
     for exclusion in exclusions:
@@ -420,6 +425,9 @@ def _get_init_fn():
         break
     else:
       variables_to_restore.append(var)
+  for var_to_restore in variables_to_restore:
+    print(var_to_restore.op.name)
+  input("Continue...")
 
   if tf.gfile.IsDirectory(FLAGS.checkpoint_path):
     checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
@@ -449,6 +457,8 @@ def _get_variables_to_train():
   for scope in scopes:
     variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope)
     variables_to_train.extend(variables)
+  print(">> Variables to train： {}".format(variables_to_train))
+  input("Continue...")
   return variables_to_train
 
 
@@ -562,8 +572,11 @@ def main(_):
             batch_size=FLAGS.batch_size,    # training set batch size
             num_threads=FLAGS.num_preprocessing_threads,
             capacity=5 * FLAGS.batch_size)
+          print("label's shape: {}".format(labels.shape))
           labels = slim.one_hot_encoding(
             labels, dataset.num_classes - FLAGS.labels_offset)
+          print("onehot label's shape: {}".format(labels.shape))
+          input("Continue...")
           # assemble the batch
           batch_queue = slim.prefetch_queue.prefetch_queue(
             [images, labels], capacity=2 * deploy_config.num_clones)
@@ -601,6 +614,8 @@ def main(_):
     def clone_fn(network_fn, batch_queue, scope_name):
       """Allows data parallelism by creating multiple clones of network_fn."""
       images, labels = batch_queue.dequeue()
+      print("onehot label's shape: {}".format(labels))
+      input("Continue...")
       logits, end_points = network_fn(images)
 
       #############################
@@ -611,7 +626,18 @@ def main(_):
             end_points['AuxLogits'], labels,
             label_smoothing=FLAGS.label_smoothing, weights=0.4,
             scope='{}/aux_loss'.format(scope_name))
-      loss_fn(
+      if FLAGS.loss_fn == "softmax_focal_loss":
+        # focal loss用在分类上时，alpha和gamma要根据当前数据的情况和训练的情况来设置
+        loss_fn(
+          logits, labels, 
+          alpha=-1,   # -1表示不用alpha_factor, 即 -tf.reduce_sum(1 * gamma_power_factor * per_entry_xentropy, axis=1)
+          gamma=1.0,
+          label_smoothing=FLAGS.label_smoothing, 
+          weights=1.0,
+          scope=scope_name
+        )
+      else:
+        loss_fn(
           logits, labels, label_smoothing=FLAGS.label_smoothing, weights=1.0,
           scope=scope_name)
       return end_points
@@ -730,6 +756,7 @@ def main(_):
     variables_to_train = _get_variables_to_train()
 
     #  and returns a train_tensor and summary_op
+    clones_gradients = None
     if FLAGS.dataset_split_name == "train_eval":  
       total_loss, clones_gradients, eval_total_loss = model_deploy.optimize_train_eval_clones(
           clones,
@@ -743,6 +770,7 @@ def main(_):
     else:
       raise ValueError("Only for train or train_eval")
 
+    print("Clone gradients: {}".format(clones_gradients))
     input("Continue...")
 
     # Add total_loss to summary.

@@ -2,7 +2,7 @@
 
 import tensorflow as tf
 
-model_path = input("Input model path: ")
+model_path = input("Input model(.pb) path: ")
 graph_dir = input("Output dir path: ")
 
 graph = tf.get_default_graph()

@@ -295,14 +295,18 @@ def preprocess_for_eval(image,
     3-D float Tensor of prepared image.
   """
   with tf.name_scope(scope, 'eval_image', [image, height, width]):
-    if bbox != None:
-      distorted_image, distorted_bbox = distorted_bounding_box_crop(image, bbox,
-                                                                    area_range=(0.7, 1.0)
-                                                                    )
-      distorted_image.set_shape([None, None, 3])
-      image = distorted_image
     if image.dtype != tf.float32:
       image = tf.image.convert_image_dtype(image, dtype=tf.float32)
+    if bbox != None:
+      distorted_image, distorted_bbox = distorted_bounding_box_crop(image, bbox,
+                                                                    area_range=(0.6, 1.0)
+                                                                    )
+      distorted_image.set_shape([None, None, 3])
+      image_with_distorted_box = tf.image.draw_bounding_boxes(
+          tf.expand_dims(image, 0), distorted_bbox)
+      tf.summary.image('images_with_distorted_bounding_box',
+                         image_with_distorted_box)
+      image = distorted_image
     if use_grayscale:
       image = tf.image.rgb_to_grayscale(image)
     # Crop the central region of the image with an area containing 87.5% of

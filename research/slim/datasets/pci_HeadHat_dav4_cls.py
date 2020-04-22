@@ -1,4 +1,9 @@
-
+"""
+Author: Roy Cheung
+Email: kiraking@outlook.com
+Description: The custom overlook hat dataset
+TODO: 适配不同的data version，如修改一些数据集大小，数据类别等
+"""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -12,12 +17,12 @@ from datasets import dataset_utils
 
 slim = contrib_slim
 
-_FILE_PATTERN = '%s.record'  # train.record or dev.record
+_FILE_PATTERN = '%s.record'  # train.record， test.record or dev.record
 
 _SPLITS_TO_SIZES = {
-    'train': 23763,
-    'dev': 1321,
-    'test': 1320,
+    'train': 15463, #23763,
+    'dev': 910, #1321,
+    'test': 1819,#1320,
 }
 
 _ITEMS_TO_DESCRIPTIONS = {
@@ -29,15 +34,17 @@ _ITEMS_TO_DESCRIPTIONS = {
 }
 
 # 4 classes: 
-#   (0) hatOnHead
-#   (1) Head
-#   (2) HatOnOthers
-#   (3) hatOnHead_HatOnOthers
-_NUM_CLASSES = 4
+#   (1) hatOnHead
+#   (2) Head
+#   (3) HatOnOthers
+#   (4) hatOnHead_HatOnOthers
+#_NUM_CLASSES = 4
 
-# If set to false, will not try to set label_to_names in dataset
-# by reading them from labels.txt or github.
-LOAD_READABLE_NAMES = True
+# 2 classes (crop version):
+#   (0) None (Background)
+#   (1) hatOnHead
+#   (2) HatOnOthers
+_NUM_CLASSES = 3
 
 
 def get_split(split_name, dataset_dir, file_pattern=None, reader=None):

@@ -1,3 +1,8 @@
+"""
+Author: Roy Cheung
+Email: kiraking@outlook.com
+Description: Generic evaluating and layer visualizing script 
+"""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -37,6 +42,9 @@ tf.app.flags.DEFINE_string(
 tf.app.flags.DEFINE_integer(
     'num_preprocessing_threads', 4,
     'The number of threads used to create the batches.')
+
+tf.app.flags.DEFINE_integer(
+    'num_classes', None, 'The number of classes.')
 
 tf.app.flags.DEFINE_string(
     'dataset_name', 'pci_HeadHat_dav4_cls', 'The name of the dataset to load.')
@@ -92,6 +100,9 @@ tf.app.flags.DEFINE_integer(
     'p_power', 2,
     'The p power function'
 )
+
+tf.app.flags.DEFINE_bool('is_binary_cls', False,
+                         'Whether is the binary classifier.')
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -201,6 +212,7 @@ def _mask_with_heatmap(image, label, predict, heatmap, scope_name, summaries=Non
     Arg:
         -- image: A 3D tensor of [H, W, 3]
         -- label: A tf.int64 tensor
+        -- predict: A tf.int64 tensor
         -- heatmap: a 2D tensor of [H, W]
         -- scope_name: the scope name of the variable
     Return:
@@ -251,15 +263,20 @@ def masked_with_heatmap(images, labels, predicts, heatmaps_dict, summarise=None,
     
     name_to_masked_img_list = []
     for idx in batch_index:
-        image = images[batch_index]
-        label = labels[batch_index]
-        predict = predicts[batch_index]
-
+        image = images[idx]
+        label = labels[idx]
+        predict = predicts[idx]
         name_to_masked_img = {}
         for heatmap_name in heatmaps_dict.keys():
-            heatmap = heatmaps_dict[heatmap_name][batch_index]
-            masked_img, summarise = _mask_with_heatmap(image, label, predict, heatmap, heatmap_name, summarise)
-            name_to_masked_img[heatmap_name] = masked_img
+            heatmap = heatmaps_dict[heatmap_name][idx]
+            heatmap_scope_name = heatmap_name + "_img{}".format(idx)
+            masked_img, summarise = _mask_with_heatmap(image, 
+                                                       label, 
+                                                       predict, 
+                                                       heatmap, 
+                                                       heatmap_scope_name, 
+                                                       summarise)
+            name_to_masked_img[heatmap_scope_name] = masked_img
             name_to_masked_img_list.append(name_to_masked_img)
     return name_to_masked_img_list, summarise
 
@@ -291,10 +308,16 @@ def main(_):
         ####################
         # Select the model #
         ####################
-        network_fn = nets_factory.get_network_fn(
-            FLAGS.model_name,
-            num_classes=(dataset.num_classes - FLAGS.labels_offset),
-            is_training=False)
+        if FLAGS.num_classes is not None:
+            network_fn = nets_factory.get_network_fn(
+                FLAGS.model_name,
+                num_classes=(FLAGS.num_classes),
+                is_training=False)
+        else:
+            network_fn = nets_factory.get_network_fn(
+                FLAGS.model_name,
+                num_classes=(dataset.num_classes - FLAGS.labels_offset),
+                is_training=False)
 
         ##############################################################
         # Create a dataset provider that loads data from the dataset #
@@ -320,7 +343,7 @@ def main(_):
         
         # Pre-Processing a single image
         #  [ymin, xmin, ymax, xmax]
-        box = tf.constant([0.2, 0.0, 0.75, 1.0],
+        box = tf.constant([0.5, 0.0, 0.6, 1.0],
                          dtype=tf.float32,
                          shape=[1, 1, 4])
         image = image_preprocessing_fn(image, eval_image_size, eval_image_size, bbox=box)
@@ -336,30 +359,6 @@ def main(_):
         # Define the model #
         ####################
         logits, end_points = network_fn(images)
-
-        ###########################################################
-        # extract the end_points which are going to be visualized #
-        ###########################################################
-        visual_map_fn = VISUAL_MAP_FN[FLAGS.visual_map_fn]  # TODO: debug those fn
-        visual_endpoint_dict = {scope.strip():None
-                            for scope in FLAGS.visual_scope.split(',')}
-        heatmap_dict = {}
-        for end_point_scope in end_points.keys():
-            if end_point_scope in visual_endpoint_dict:
-                # F(x) -> y, where x of B*C*H*W, y of B*H*W
-                heatmap_dict[end_point_scope] = visual_map_fn(end_points[end_point_scope])
-                visual_endpoint_dict[end_point_scope] = end_points[end_point_scope]
-        
-        if len(heatmap_dict.keys()) == 0:
-            print(end_points.keys())
-            print(visual_endpoint_dict)
-            print(heatmap_dict)
-            raise ValueError("No heatmap.")
-        
-        #print(end_points.keys())
-        print(visual_endpoint_dict)
-        print(heatmap_dict)
-        input("Continue...")
 
         if FLAGS.quantize:
             contrib_quantize.create_eval_graph()
@@ -378,13 +377,28 @@ def main(_):
 
         # Gather initial summaries.
         summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES))
+        names_to_values = {}
+        names_to_updates = {}
 
         # Define the metrics:
-        names_to_values, names_to_updates = slim.metrics.aggregate_metric_map({
-            'Accuracy': slim.metrics.streaming_accuracy(predictions, labels),
-            'Recall_5': slim.metrics.streaming_recall_at_k(
-                logits, labels, 5),
-        })
+        if FLAGS.is_binary_cls:
+            names_to_values, names_to_updates = slim.metrics.aggregate_metric_map({
+                'TP':slim.metrics.streaming_true_positives(predictions, labels),
+                'TN':slim.metrics.streaming_true_negatives(predictions, labels),
+                'FP':slim.metrics.streaming_false_positives(predictions, labels),
+                'FN':slim.metrics.streaming_false_negatives(predictions, labels),
+                'Accuracy': slim.metrics.streaming_accuracy(predictions, labels),
+                'Precision': slim.metrics.streaming_precision(predictions, labels),
+                'Recall':slim.metrics.streaming_recall(predictions, labels),
+                'Recall_5': slim.metrics.streaming_recall_at_k(
+                    logits, labels, 5)
+            })
+        else:
+            names_to_values, names_to_updates = slim.metrics.aggregate_metric_map({
+                'Accuracy': slim.metrics.streaming_accuracy(predictions, labels),
+                'Recall_5': slim.metrics.streaming_recall_at_k(
+                    logits, labels, 5),
+            })
 
         # Print the summaries to screen.
         for name, value in names_to_values.items():
@@ -392,15 +406,39 @@ def main(_):
             op = tf.summary.scalar(summary_name, value, collections=[])
             op = tf.Print(op, [value], summary_name)
             summaries.add(op)
+        
+        ###########################################################
+        # extract the end_points which are going to be visualized #
+        ###########################################################
+        visual_map_fn = VISUAL_MAP_FN[FLAGS.visual_map_fn]  # TODO: debug those fn
+        visual_endpoint_dict = {scope.strip():None
+                            for scope in FLAGS.visual_scope.split(',')}
+        heatmap_dict = {}
+        for end_point_scope in end_points.keys():
+            if end_point_scope in visual_endpoint_dict:
+                # F(x) -> y, where x of B*C*H*W, y of B*H*W
+                heatmap_dict[end_point_scope] = visual_map_fn(end_points[end_point_scope])
+                visual_endpoint_dict[end_point_scope] = end_points[end_point_scope]
+        
+        if len(heatmap_dict.keys()) == 0:
+            print(end_points.keys())
+            print(visual_endpoint_dict)
+            print(heatmap_dict)
+            raise ValueError("No heatmap.")
 
         # Mask the image with heatmaps from different layers & add to summary
         # Defaultly only visualize the first sample in a batch
-        _, summaries = masked_with_heatmap(images,
+        scope_to_masked_img_list, summaries = masked_with_heatmap(images,
                                            labels,
                                            predictions,
                                            heatmap_dict,
-                                           summarise=summaries)
-
+                                           summarise=summaries,
+                                           batch_index=[0,10,20,30,40,50,60,70,80,90])
+        
+        for scope2mask in scope_to_masked_img_list:
+            for scope_name, update_masked_img in scope2mask.items():
+                names_to_updates[scope_name] = update_masked_img
+        
         # Add the masked images to summary
         # for scope_name, masked_img in scope_to_masked_img.items():
         #     summary_name = 'visual/{}'.format(scope_name)

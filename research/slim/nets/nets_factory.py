@@ -149,6 +149,7 @@ def get_network_fn(name, num_classes, weight_decay=0.0, is_training=False):
   @functools.wraps(func)
   def network_fn(images, **kwargs):
     arg_scope = arg_scopes_map[name](weight_decay=weight_decay)
+    # arg_scope 统一配置weigth_decay参数
     with slim.arg_scope(arg_scope):
       return func(images, num_classes=num_classes, is_training=is_training,
                   **kwargs)

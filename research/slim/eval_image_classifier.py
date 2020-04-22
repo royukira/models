@@ -51,6 +51,9 @@ tf.app.flags.DEFINE_integer(
     'num_preprocessing_threads', 4,
     'The number of threads used to create the batches.')
 
+tf.app.flags.DEFINE_integer(
+    'num_classes', None, 'The number of classes.')
+
 tf.app.flags.DEFINE_string(
     'dataset_name', 'imagenet', 'The name of the dataset to load.')
 
@@ -87,6 +90,9 @@ tf.app.flags.DEFINE_bool(
 tf.app.flags.DEFINE_bool('use_grayscale', False,
                          'Whether to convert input images to grayscale.')
 
+tf.app.flags.DEFINE_bool('is_binary_cls', False,
+                         'Whether is the binary classifier.')
+
 FLAGS = tf.app.flags.FLAGS
 
 
@@ -107,10 +113,16 @@ def main(_):
     ####################
     # Select the model #
     ####################
-    network_fn = nets_factory.get_network_fn(
-        FLAGS.model_name,
-        num_classes=(dataset.num_classes - FLAGS.labels_offset),
-        is_training=False)
+    if FLAGS.num_classes is not None:
+        network_fn = nets_factory.get_network_fn(
+            FLAGS.model_name,
+            num_classes=(FLAGS.num_classes),
+            is_training=False)
+    else:
+        network_fn = nets_factory.get_network_fn(
+            FLAGS.model_name,
+            num_classes=(dataset.num_classes - FLAGS.labels_offset),
+            is_training=False)
 
     ##############################################################
     # Create a dataset provider that loads data from the dataset #
@@ -163,11 +175,24 @@ def main(_):
     labels = tf.squeeze(labels)
 
     # Define the metrics:
-    names_to_values, names_to_updates = slim.metrics.aggregate_metric_map({
-        'Accuracy': slim.metrics.streaming_accuracy(predictions, labels),
-        'Recall_5': slim.metrics.streaming_recall_at_k(
-            logits, labels, 5),
-    })
+    if FLAGS.is_binary_cls:
+        names_to_values, names_to_updates = slim.metrics.aggregate_metric_map({
+            'TP':slim.metrics.streaming_true_positives(predictions, labels),
+            'TN':slim.metrics.streaming_true_negatives(predictions, labels),
+            'FP':slim.metrics.streaming_false_positives(predictions, labels),
+            'FN':slim.metrics.streaming_false_negatives(predictions, labels),
+            'Accuracy': slim.metrics.streaming_accuracy(predictions, labels),
+            'Precision': slim.metrics.streaming_precision(predictions, labels),
+            'Recall':slim.metrics.streaming_recall(predictions, labels),
+            'Recall_5': slim.metrics.streaming_recall_at_k(
+                logits, labels, 5)
+        })
+    else:
+        names_to_values, names_to_updates = slim.metrics.aggregate_metric_map({
+            'Accuracy': slim.metrics.streaming_accuracy(predictions, labels),
+            'Recall_5': slim.metrics.streaming_recall_at_k(
+                logits, labels, 5),
+        })
 
     # Print the summaries to screen.
     for name, value in names_to_values.items():
@@ -189,6 +214,8 @@ def main(_):
       checkpoint_path = FLAGS.checkpoint_path
 
     tf.logging.info('Evaluating %s' % checkpoint_path)
+    
+    input("Continue...")
 
     slim.evaluation.evaluate_once(
         master=FLAGS.master,

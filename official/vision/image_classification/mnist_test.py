@@ -22,11 +22,9 @@ import functools
 
 from absl.testing import parameterized
 import tensorflow as tf
-import tensorflow_datasets as tfds
 
 from tensorflow.python.distribute import combinations
 from tensorflow.python.distribute import strategy_combinations
-from official.utils.misc import keras_utils
 from official.utils.testing import integration
 from official.vision.image_classification import mnist_main
 
@@ -58,8 +56,6 @@ class KerasMnistTest(tf.test.TestCase, parameterized.TestCase):
   @combinations.generate(eager_strategy_combinations())
   def test_end_to_end(self, distribution):
     """Test Keras MNIST model with `strategy`."""
-    config = keras_utils.get_config_proto_v1()
-    tf.compat.v1.enable_eager_execution(config=config)
 
     extra_flags = [
         "-train_epochs", "1",
@@ -88,5 +84,4 @@ class KerasMnistTest(tf.test.TestCase, parameterized.TestCase):
 
 
 if __name__ == "__main__":
-  tf.compat.v1.enable_v2_behavior()
   tf.test.main()

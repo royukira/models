@@ -1,5 +1,9 @@
 ## Attention-based Extraction of Structured Information from Street View Imagery
 
+[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/attention-based-extraction-of-structured/optical-character-recognition-on-fsns-test)](https://paperswithcode.com/sota/optical-character-recognition-on-fsns-test?p=attention-based-extraction-of-structured)
+[![Paper](http://img.shields.io/badge/paper-arXiv.1704.03549-B3181B.svg)](https://arxiv.org/abs/1704.03549)
+[![TensorFlow 1.15](https://img.shields.io/badge/tensorflow-1.15-brightgreen)](https://github.com/tensorflow/tensorflow/releases/tag/v1.15.0)
+
 *A TensorFlow model for real-world image text extraction problems.*
 
 This folder contains the code needed to train a new Attention OCR model on the
@@ -13,22 +17,22 @@ Imagery"](https://arxiv.org/abs/1704.03549)
 
 ## Contacts
 
-Authors:
-Zbigniew Wojna <zbigniewwojna@gmail.com>,
-Alexander Gorban <gorban@google.com>
+Authors
 
-Pull requests:
-[alexgorban](https://github.com/alexgorban)
+* Zbigniew Wojna (zbigniewwojna@gmail.com)
+* Alexander Gorban (gorban@google.com)
+
+Maintainer: Xavier Gibert [@xavigibert](https://github.com/xavigibert)
 
 ## Requirements
 
 1. Install the TensorFlow library ([instructions][TF]). For example:
 
 ```
-virtualenv --system-site-packages ~/.tensorflow
+python3 -m venv ~/.tensorflow
 source ~/.tensorflow/bin/activate
 pip install --upgrade pip
-pip install --upgrade tensorflow-gpu
+pip install --upgrade tensorflow-gpu=1.15
 ```
 
 2. At least 158GB of free disk space to download the FSNS dataset:
@@ -51,7 +55,7 @@ To run all unit tests:
 
 ```
 cd research/attention_ocr/python
-python -m unittest discover -p  '*_test.py'
+find . -name "*_test.py" -printf '%P\n' | xargs python3 -m unittest
 ```
 
 To train from scratch:

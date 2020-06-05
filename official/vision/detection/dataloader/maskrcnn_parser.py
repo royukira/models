@@ -14,7 +14,7 @@
 # ==============================================================================
 """Data parser and processing for Mask R-CNN."""
 
-import tensorflow.compat.v2 as tf
+import tensorflow as tf
 
 from official.vision.detection.dataloader import anchor
 from official.vision.detection.dataloader import mode_keys as ModeKeys
@@ -353,7 +353,9 @@ class Parser(object):
         self._anchor_size,
         (image_height, image_width))
 
-    labels = {}
+    labels = {
+        'image_info': image_info,
+    }
 
     if self._mode == ModeKeys.PREDICT_WITH_GT:
       # Converts boxes from normalized coordinates to pixel coordinates.

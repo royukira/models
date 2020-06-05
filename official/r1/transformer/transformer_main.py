@@ -29,7 +29,7 @@ import tempfile
 from six.moves import xrange  # pylint: disable=redefined-builtin
 from absl import app as absl_app
 from absl import flags
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 # pylint: enable=g-bad-import-order
 
 from official.nlp.transformer import model_params
@@ -39,12 +39,12 @@ from official.r1.transformer import translate
 from official.r1.transformer import transformer
 from official.r1.transformer import dataset
 from official.r1.transformer import schedule
-from official.transformer import compute_bleu
-from official.transformer.utils import metrics
-from official.transformer.utils import tokenizer
+from official.nlp.transformer import compute_bleu
+from official.nlp.transformer.utils import metrics
+from official.nlp.transformer.utils import tokenizer
 from official.utils.flags import core as flags_core
-from official.utils.logs import hooks_helper
-from official.utils.logs import logger
+from official.r1.utils.logs import hooks_helper
+from official.r1.utils.logs import logger
 from official.utils.misc import distribution_utils
 from official.utils.misc import model_helpers
 
@@ -177,14 +177,15 @@ def get_train_op_and_metrics(loss, params):
 
     # Create optimizer. Use LazyAdamOptimizer from TF contrib, which is faster
     # than the TF core Adam optimizer.
-    optimizer = tf.contrib.opt.LazyAdamOptimizer(
+    from tensorflow.contrib import opt as contrib_opt  # pylint: disable=g-import-not-at-top
+    optimizer = contrib_opt.LazyAdamOptimizer(
         learning_rate,
         beta1=params["optimizer_adam_beta1"],
         beta2=params["optimizer_adam_beta2"],
         epsilon=params["optimizer_adam_epsilon"])
 
     if params["use_tpu"] and params["tpu"] != tpu_util.LOCAL:
-      optimizer = tf.contrib.tpu.CrossShardOptimizer(optimizer)
+      optimizer = tf.compat.v1.tpu.CrossShardOptimizer(optimizer)
 
     # Uses automatic mixed precision FP16 training if on GPU.
     if params["dtype"] == "fp16":
@@ -533,7 +534,7 @@ def construct_estimator(flags_obj, params, schedule_manager):
         model_fn=model_fn, model_dir=flags_obj.model_dir, params=params,
         config=tf.estimator.RunConfig(train_distribute=distribution_strategy))
 
-  tpu_cluster_resolver = tf.contrib.cluster_resolver.TPUClusterResolver(
+  tpu_cluster_resolver = tf.compat.v1.cluster_resolver.TPUClusterResolver(
       tpu=flags_obj.tpu,
       zone=flags_obj.tpu_zone,
       project=flags_obj.tpu_gcp_project
@@ -560,6 +561,36 @@ def construct_estimator(flags_obj, params, schedule_manager):
           key: value for key, value in params.items() if key != "batch_size"
       },
       config=run_config)
+
+def per_replica_batch_size(batch_size, num_gpus):
+  """For multi-gpu, batch-size must be a multiple of the number of GPUs.
+
+
+  Note that distribution strategy handles this automatically when used with
+  Keras. For using with Estimator, we need to get per GPU batch.
+
+  Args:
+    batch_size: Global batch size to be divided among devices. This should be
+      equal to num_gpus times the single-GPU batch_size for multi-gpu training.
+    num_gpus: How many GPUs are used with DistributionStrategies.
+
+  Returns:
+    Batch size per device.
+
+  Raises:
+    ValueError: if batch_size is not divisible by number of devices
+  """
+  if num_gpus <= 1:
+    return batch_size
+
+  remainder = batch_size % num_gpus
+  if remainder:
+    err = ('When running with multiple GPUs, batch size '
+           'must be a multiple of the number of available GPUs. Found {} '
+           'GPUs with a batch size of {}; try --batch_size={} instead.'
+          ).format(num_gpus, batch_size, batch_size - remainder)
+    raise ValueError(err)
+  return int(batch_size / num_gpus)
 
 
 def run_transformer(flags_obj):
@@ -604,8 +635,8 @@ def run_transformer(flags_obj):
 
   total_batch_size = params["batch_size"]
   if not params["use_tpu"]:
-    params["batch_size"] = distribution_utils.per_replica_batch_size(
-        params["batch_size"], num_gpus)
+    params["batch_size"] = per_replica_batch_size(params["batch_size"],
+                                                  num_gpus)
 
   schedule_manager = schedule.Manager(
       train_steps=flags_obj.train_steps,

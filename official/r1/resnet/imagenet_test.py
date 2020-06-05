@@ -20,12 +20,12 @@ from __future__ import print_function
 import unittest
 
 import tensorflow as tf  # pylint: disable=g-bad-import-order
+from absl import logging
 
 from official.r1.resnet import imagenet_main
-from official.utils.misc import keras_utils
 from official.utils.testing import integration
 
-tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+logging.set_verbosity(logging.ERROR)
 
 _BATCH_SIZE = 32
 _LABEL_CLASSES = 1001
@@ -42,8 +42,7 @@ class BaseTest(tf.test.TestCase):
 
   def setUp(self):
     super(BaseTest, self).setUp()
-    if keras_utils.is_v2_0:
-      tf.compat.v1.disable_eager_execution()
+    tf.compat.v1.disable_eager_execution()
     self._num_validation_images = imagenet_main.NUM_IMAGES['validation']
     imagenet_main.NUM_IMAGES['validation'] = 4
 

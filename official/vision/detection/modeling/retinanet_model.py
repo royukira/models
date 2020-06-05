@@ -18,10 +18,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import collections
-import numpy as np
-from absl import logging
-import tensorflow.compat.v2 as tf
+import tensorflow as tf
 
 from tensorflow.python.keras import backend
 from official.vision.detection.dataloader import mode_keys
@@ -44,16 +41,19 @@ class RetinanetModel(base_model.Model):
     # Architecture generators.
     self._backbone_fn = factory.backbone_generator(params)
     self._fpn_fn = factory.multilevel_features_generator(params)
-    self._head_fn = factory.retinanet_head_generator(params.retinanet_head)
+    self._head_fn = factory.retinanet_head_generator(params)
 
     # Loss function.
-    self._cls_loss_fn = losses.RetinanetClassLoss(params.retinanet_loss)
+    self._cls_loss_fn = losses.RetinanetClassLoss(
+        params.retinanet_loss, params.architecture.num_classes)
     self._box_loss_fn = losses.RetinanetBoxLoss(params.retinanet_loss)
     self._box_loss_weight = params.retinanet_loss.box_loss_weight
     self._keras_model = None
 
     # Predict function.
     self._generate_detections_fn = postprocess_ops.MultilevelDetectionGenerator(
+        params.architecture.min_level,
+        params.architecture.max_level,
         params.postprocess)
 
     self._transpose_input = params.train.transpose_input
@@ -106,8 +106,7 @@ class RetinanetModel(base_model.Model):
                                    labels['box_targets'],
                                    labels['num_positives'])
       model_loss = cls_loss + self._box_loss_weight * box_loss
-      l2_regularization_loss = self.weight_decay_loss(self._l2_weight_decay,
-                                                      trainable_variables)
+      l2_regularization_loss = self.weight_decay_loss(trainable_variables)
       total_loss = model_loss + l2_regularization_loss
       return {
           'total_loss': total_loss,

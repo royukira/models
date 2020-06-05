@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 """Span labeling network."""
-
+# pylint: disable=g-classes-have-attributes
 from __future__ import absolute_import
 from __future__ import division
 # from __future__ import google_type_annotations
@@ -21,17 +21,14 @@ from __future__ import print_function
 
 import tensorflow as tf
 
-# pylint: disable=g-direct-tensorflow-import
-from tensorflow.python.keras.engine import network
-
 
 @tf.keras.utils.register_keras_serializable(package='Text')
-class SpanLabeling(network.Network):
+class SpanLabeling(tf.keras.Model):
   """Span labeling network head for BERT modeling.
 
   This network implements a simple single-span labeler based on a dense layer.
 
-  Attributes:
+  Arguments:
     input_width: The innermost dimension of the input tensor to this network.
     activation: The activation, if any, for the dense layer in this network.
     initializer: The intializer for the dense layer in this network. Defaults to
@@ -57,14 +54,12 @@ class SpanLabeling(network.Network):
     sequence_data = tf.keras.layers.Input(
         shape=(None, input_width), name='sequence_data', dtype=tf.float32)
 
-    time_distributed_dense = tf.keras.layers.TimeDistributed(
-        tf.keras.layers.Dense(
-            2,  # This layer predicts start location and end location.
-            activation=activation,
-            kernel_initializer=initializer,
-            name='predictions/transform/logits'))
-
-    intermediate_logits = time_distributed_dense(sequence_data)
+    intermediate_logits = tf.keras.layers.Dense(
+        2,  # This layer predicts start location and end location.
+        activation=activation,
+        kernel_initializer=initializer,
+        name='predictions/transform/logits')(
+            sequence_data)
     self.start_logits, self.end_logits = (
         tf.keras.layers.Lambda(self._split_output_tensor)(intermediate_logits))
 

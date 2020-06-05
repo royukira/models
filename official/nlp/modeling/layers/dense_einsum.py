@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 """Keras-based einsum layer."""
-
+# pylint: disable=g-classes-have-attributes
 from __future__ import absolute_import
 from __future__ import division
 # from __future__ import google_type_annotations
@@ -30,7 +30,7 @@ class DenseEinsum(tf.keras.layers.Layer):
 
   This layer can perform einsum calculations of arbitrary dimensionality.
 
-  Attributes:
+  Arguments:
     output_shape: Positive integer or tuple, dimensionality of the output space.
     num_summed_dimensions: The number of dimensions to sum over. Standard 2D
       matmul should use 1, 3D matmul should use 2, and so forth.
@@ -143,22 +143,12 @@ class DenseEinsum(tf.keras.layers.Layer):
       self._bias = None
     super(DenseEinsum, self).build(input_shape)
 
-  def compute_output_shape(self, input_shape):
-    input_shape = tf.TensorShape(input_shape)
-    input_shape = input_shape.with_rank_at_least(self._num_summed_dimensions +
-                                                 1)
-    for i in range(self._num_summed_dimensions):
-      if tf.dimension_value(input_shape[-1 * i]) is None:
-        raise ValueError(
-            "The %s dimension of input_shape must be defined, but saw: %s" %
-            (-1 * i, input_shape))
-    return input_shape[:-1 * self._num_summed_dimensions].concatenate(
-        self._units)
-
   def get_config(self):
     config = {
         "output_shape":
             self._output_shape,
+        "num_summed_dimensions":
+            self._num_summed_dimensions,
         "activation":
             tf.keras.activations.serialize(self._activation),
         "use_bias":

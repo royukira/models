@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 """Transformer-based text encoder network."""
-
+# pylint: disable=g-classes-have-attributes
 from __future__ import absolute_import
 from __future__ import division
 # from __future__ import google_type_annotations
@@ -21,13 +21,12 @@ from __future__ import print_function
 
 import tensorflow as tf
 
-from tensorflow.python.keras.engine import network  # pylint: disable=g-direct-tensorflow-import
 from official.modeling import activations
 from official.nlp.modeling import layers
 
 
 @tf.keras.utils.register_keras_serializable(package='Text')
-class TransformerEncoder(network.Network):
+class TransformerEncoder(tf.keras.Model):
   """Bi-directional Transformer-based encoder network.
 
   This network implements a bi-directional Transformer-based encoder as
@@ -40,7 +39,7 @@ class TransformerEncoder(network.Network):
   in "BERT: Pre-training of Deep Bidirectional Transformers for Language
   Understanding".
 
-  Attributes:
+  Arguments:
     vocab_size: The size of the token vocabulary.
     hidden_size: The size of the transformer hidden layers.
     num_layers: The number of transformer layers.
@@ -59,7 +58,17 @@ class TransformerEncoder(network.Network):
     attention_dropout_rate: The dropout rate to use for the attention layers
       within the transformer layers.
     initializer: The initialzer to use for all weights in this encoder.
-    float_dtype: The dtype of this encoder. Can be 'float32' or 'float16'.
+    return_all_encoder_outputs: Whether to output sequence embedding outputs of
+      all encoder transformer layers.
+    output_range: the sequence output range, [0, output_range), by slicing the
+      target sequence of the last transformer layer. `None` means the entire
+      target sequence will attend to the source sequence, which yeilds the full
+      output.
+    embedding_width: The width of the word embeddings. If the embedding width
+      is not equal to hidden size, embedding parameters will be factorized into
+      two matrices in the shape of ['vocab_size', 'embedding_width'] and
+      ['embedding_width', 'hidden_size'] ('embedding_width' is usually much
+      smaller than 'hidden_size').
   """
 
   def __init__(self,
@@ -75,7 +84,9 @@ class TransformerEncoder(network.Network):
                dropout_rate=0.1,
                attention_dropout_rate=0.1,
                initializer=tf.keras.initializers.TruncatedNormal(stddev=0.02),
-               float_dtype='float32',
+               return_all_encoder_outputs=False,
+               output_range=None,
+               embedding_width=None,
                **kwargs):
     activation = tf.keras.activations.get(activation)
     initializer = tf.keras.initializers.get(initializer)
@@ -96,7 +107,9 @@ class TransformerEncoder(network.Network):
         'dropout_rate': dropout_rate,
         'attention_dropout_rate': attention_dropout_rate,
         'initializer': tf.keras.initializers.serialize(initializer),
-        'float_dtype': float_dtype,
+        'return_all_encoder_outputs': return_all_encoder_outputs,
+        'output_range': output_range,
+        'embedding_width': embedding_width,
     }
 
     word_ids = tf.keras.layers.Input(
@@ -106,9 +119,11 @@ class TransformerEncoder(network.Network):
     type_ids = tf.keras.layers.Input(
         shape=(sequence_length,), dtype=tf.int32, name='input_type_ids')
 
+    if embedding_width is None:
+      embedding_width = hidden_size
     self._embedding_layer = layers.OnDeviceEmbedding(
         vocab_size=vocab_size,
-        embedding_width=hidden_size,
+        embedding_width=embedding_width,
         initializer=initializer,
         name='word_embeddings')
     word_embeddings = self._embedding_layer(word_ids)
@@ -117,19 +132,20 @@ class TransformerEncoder(network.Network):
     self._position_embedding_layer = layers.PositionEmbedding(
         initializer=initializer,
         use_dynamic_slicing=True,
-        max_sequence_length=max_sequence_length)
+        max_sequence_length=max_sequence_length,
+        name='position_embedding')
     position_embeddings = self._position_embedding_layer(word_embeddings)
-
-    type_embeddings = (
-        layers.OnDeviceEmbedding(
-            vocab_size=type_vocab_size,
-            embedding_width=hidden_size,
-            initializer=initializer,
-            use_one_hot=True,
-            name='type_embeddings')(type_ids))
+    self._type_embedding_layer = layers.OnDeviceEmbedding(
+        vocab_size=type_vocab_size,
+        embedding_width=embedding_width,
+        initializer=initializer,
+        use_one_hot=True,
+        name='type_embeddings')
+    type_embeddings = self._type_embedding_layer(type_ids)
 
     embeddings = tf.keras.layers.Add()(
         [word_embeddings, position_embeddings, type_embeddings])
+
     embeddings = (
         tf.keras.layers.LayerNormalization(
             name='embeddings/layer_norm',
@@ -137,46 +153,74 @@ class TransformerEncoder(network.Network):
             epsilon=1e-12,
             dtype=tf.float32)(embeddings))
     embeddings = (
-        tf.keras.layers.Dropout(rate=dropout_rate,
-                                dtype=tf.float32)(embeddings))
+        tf.keras.layers.Dropout(rate=dropout_rate)(embeddings))
 
-    if float_dtype == 'float16':
-      embeddings = tf.cast(embeddings, tf.float16)
+    # We project the 'embedding' output to 'hidden_size' if it is not already
+    # 'hidden_size'.
+    if embedding_width != hidden_size:
+      self._embedding_projection = tf.keras.layers.experimental.EinsumDense(
+          '...x,xy->...y',
+          output_shape=hidden_size,
+          bias_axes='y',
+          kernel_initializer=initializer,
+          name='embedding_projection')
+      embeddings = self._embedding_projection(embeddings)
 
+    self._transformer_layers = []
     data = embeddings
     attention_mask = layers.SelfAttentionMask()([data, mask])
+    encoder_outputs = []
     for i in range(num_layers):
+      if i == num_layers - 1 and output_range is not None:
+        transformer_output_range = output_range
+      else:
+        transformer_output_range = None
       layer = layers.Transformer(
           num_attention_heads=num_attention_heads,
           intermediate_size=intermediate_size,
           intermediate_activation=activation,
           dropout_rate=dropout_rate,
           attention_dropout_rate=attention_dropout_rate,
+          output_range=transformer_output_range,
           kernel_initializer=initializer,
-          dtype=float_dtype,
           name='transformer/layer_%d' % i)
+      self._transformer_layers.append(layer)
       data = layer([data, attention_mask])
+      encoder_outputs.append(data)
 
     first_token_tensor = (
-        tf.keras.layers.Lambda(lambda x: tf.squeeze(x[:, 0:1, :], axis=1))(data)
-    )
-    cls_output = tf.keras.layers.Dense(
+        tf.keras.layers.Lambda(lambda x: tf.squeeze(x[:, 0:1, :], axis=1))(
+            encoder_outputs[-1]))
+    self._pooler_layer = tf.keras.layers.Dense(
         units=hidden_size,
         activation='tanh',
         kernel_initializer=initializer,
-        name='pooler_transform')(
-            first_token_tensor)
+        name='pooler_transform')
+    cls_output = self._pooler_layer(first_token_tensor)
+
+    if return_all_encoder_outputs:
+      outputs = [encoder_outputs, cls_output]
+    else:
+      outputs = [encoder_outputs[-1], cls_output]
 
     super(TransformerEncoder, self).__init__(
-        inputs=[word_ids, mask, type_ids],
-        outputs=[data, cls_output],
-        **kwargs)
+        inputs=[word_ids, mask, type_ids], outputs=outputs, **kwargs)
 
   def get_embedding_table(self):
     return self._embedding_layer.embeddings
 
   def get_config(self):
     return self._config_dict
+
+  @property
+  def transformer_layers(self):
+    """List of Transformer layers in the encoder."""
+    return self._transformer_layers
+
+  @property
+  def pooler_layer(self):
+    """The pooler dense layer after the transformer layers."""
+    return self._pooler_layer
 
   @classmethod
   def from_config(cls, config, custom_objects=None):

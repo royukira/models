@@ -45,16 +45,14 @@ from __future__ import print_function
 
 import os
 
-# pylint: disable=g-bad-import-order
-import numpy as np
 from absl import app as absl_app
 from absl import flags
-import tensorflow as tf
-# pylint: enable=g-bad-import-order
+import numpy as np
+import tensorflow.compat.v1 as tf
 
+from official.r1.utils.logs import logger
 from official.utils.flags import core as flags_core
 from official.utils.flags._conventions import help_wrap
-from official.utils.logs import logger
 
 NPZ_FILE = "HIGGS.csv.gz.npz"  # numpy compressed file containing "data" array
 
@@ -229,7 +227,8 @@ def train_boosted_trees(flags_obj):
 
   # Though BoostedTreesClassifier is under tf.estimator, faster in-memory
   # training is yet provided as a contrib library.
-  classifier = tf.contrib.estimator.boosted_trees_classifier_train_in_memory(
+  from tensorflow.contrib import estimator as contrib_estimator  # pylint: disable=g-import-not-at-top
+  classifier = contrib_estimator.boosted_trees_classifier_train_in_memory(
       train_input_fn,
       feature_columns,
       model_dir=flags_obj.model_dir or None,

@@ -455,6 +455,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False,
         summaries = ['gradients', 'gradient_norm', 'global_gradient_norm']
       
       # 定义优化器节点，训练时就run这个节点
+      # Note: optimize_loss函数里包含了 compute_gradients() 和 apply_gradients()
       train_op = tf.contrib.layers.optimize_loss(
           loss=total_loss,
           global_step=global_step,

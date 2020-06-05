@@ -32,6 +32,7 @@ from nets import resnet_v2
 from nets import s3dg
 from nets import vgg
 from nets.mobilenet import mobilenet_v2
+from nets.mobilenet import mobilenet_v3
 from nets.nasnet import nasnet
 from nets.nasnet import pnasnet
 
@@ -67,6 +68,9 @@ networks_map = {'alexnet_v2': alexnet.alexnet_v2,
                 'mobilenet_v2': mobilenet_v2.mobilenet,
                 'mobilenet_v2_140': mobilenet_v2.mobilenet_v2_140,
                 'mobilenet_v2_035': mobilenet_v2.mobilenet_v2_035,
+                'mobilenet_v3': mobilenet_v3.mobilenet,
+                'mobilenet_v3_large': mobilenet_v3.large,
+                'mobilenet_v3_small': mobilenet_v3.small,
                 'nasnet_cifar': nasnet.build_nasnet_cifar,
                 'nasnet_mobile': nasnet.build_nasnet_mobile,
                 'nasnet_large': nasnet.build_nasnet_large,
@@ -104,6 +108,9 @@ arg_scopes_map = {'alexnet_v2': alexnet.alexnet_v2_arg_scope,
                   'mobilenet_v2': mobilenet_v2.training_scope,
                   'mobilenet_v2_035': mobilenet_v2.training_scope,
                   'mobilenet_v2_140': mobilenet_v2.training_scope,
+                  'mobilenet_v3': mobilenet_v3.training_scope,
+                  'mobilenet_v3_large': mobilenet_v3.training_scope,
+                  'mobilenet_v3_small': mobilenet_v3.training_scope,
                   'nasnet_cifar': nasnet.nasnet_cifar_arg_scope,
                   'nasnet_mobile': nasnet.nasnet_mobile_arg_scope,
                   'nasnet_large': nasnet.nasnet_large_arg_scope,

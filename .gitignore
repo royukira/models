@@ -96,3 +96,11 @@ ENV/
 
 # For mac
 .DS_Store
+
+# For tar
+.tar.*
+
+# For image
+.png
+.jpg
+.bnp

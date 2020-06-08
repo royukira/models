@@ -16,7 +16,12 @@
 """Tests for model_builder under TensorFlow 1.X."""
 
 from absl.testing import parameterized
-import tensorflow.compat.v1 as tf
+from object_detection.utils import tf_version
+if tf_version.is_tf2:
+  import tensorflow.compat.v1 as tf
+else:
+  import tensorflow as tf
+
 
 from object_detection.builders import model_builder
 from object_detection.builders import model_builder_test

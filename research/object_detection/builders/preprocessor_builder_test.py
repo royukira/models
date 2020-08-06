@@ -16,7 +16,7 @@
 """Tests for preprocessor_builder."""
 
 from object_detection.utils import tf_version
-if tf_version.is_tf2:
+if tf_version.is_tf2():
   import tensorflow.compat.v1 as tf
 else:
   import tensorflow as tf

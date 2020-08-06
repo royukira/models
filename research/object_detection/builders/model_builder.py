@@ -289,7 +289,11 @@ def _build_ssd_feature_extractor(feature_extractor_config,
         'additional_layer_depth':
             feature_extractor_config.fpn.additional_layer_depth,
     })
-
+    if feature_extractor_config.fpn.HasField('mnasfpn'):
+        kwargs.update({
+            'mnas_depth_multiplier':
+                feature_extractor_config.fpn.mnasfpn.mnas_depth_multiplier,
+        })
 
   return feature_extractor_class(**kwargs)
 

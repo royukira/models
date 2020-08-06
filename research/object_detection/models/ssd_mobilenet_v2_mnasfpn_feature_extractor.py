@@ -24,7 +24,7 @@ import functools
 from six.moves import range
 import tensorflow.compat.v1 as tf
 
-slim = tf.contrib.slim
+import tensorflow.contrib.slim as slim
 from object_detection.meta_architectures import ssd_meta_arch
 from object_detection.utils import ops
 from object_detection.utils import shape_utils
@@ -61,10 +61,13 @@ def _apply_multiplier(d, multiplier, min_depth):
       p, multiplier=multiplier, divisible_by=8, min_depth=min_depth)
   return p['num_outputs']
 
-
+"""
+Modified by Roy in 2020.6.30
+add deconvolution for upsampling 
+"""
 def _apply_size_dependent_ordering(input_feature, feature_level, block_level,
                                    expansion_size, use_explicit_padding,
-                                   use_native_resize_op):
+                                   use_native_resize_op, use_deconv_upsampling=True):
   """Applies Size-Dependent-Ordering when resizing feature maps.
 
      See https://arxiv.org/abs/1912.01106
@@ -89,7 +92,16 @@ def _apply_size_dependent_ordering(input_feature, feature_level, block_level,
         normalizer_fn=slim.batch_norm,
         padding=padding,
         scope='Conv1x1')
+    # node = input_feature
     if feature_level == block_level:
+      # """ Modified by Roy: do not conv before upsampling"""
+      # node = slim.conv2d(
+      #   node,
+      #   expansion_size, [1, 1],
+      #   activation_fn=None,
+      #   normalizer_fn=slim.batch_norm,
+      #   padding=padding,
+      #   scope='Conv1x1')
       return node
     scale = 2**(feature_level - block_level)
     if use_native_resize_op:
@@ -97,7 +109,16 @@ def _apply_size_dependent_ordering(input_feature, feature_level, block_level,
       node = tf.image.resize_nearest_neighbor(
           node, [input_shape[1] * scale, input_shape[2] * scale])
     else:
-      node = ops.nearest_neighbor_upsampling(node, scale=scale)
+      if use_deconv_upsampling:
+        deconv_kernl_size = [3, 3]     # 根据mobilenetv2,对应feature map做downsampling的kernel size决定
+        deconv_stride = [scale, scale] # 根据scale决定
+        node = slim.conv2d_transpose(
+          node, expansion_size, deconv_kernl_size, deconv_stride, padding,
+          activation_fn=None, 
+          normalizer_fn=slim.batch_norm,
+          scope="Deconv_upsampling")
+      else:
+        node = ops.nearest_neighbor_upsampling(node, scale=scale)
   else:  # Perform downsampling then 1x1.
     stride = 2**(block_level - feature_level)
     node = slim.max_pool2d(
@@ -218,7 +239,11 @@ def training_scope(l2_weight_decay=1e-4, is_training=None):
                      scale=True) as s:
     return s
 
-
+"""
+Modified by Roy
+Data: 2020.07.24
+Description: Add 'mnas_depth_multiplier' for mnasfpn module, default is 1.0
+"""
 class SSDMobileNetV2MnasFPNFeatureExtractor(ssd_meta_arch.SSDFeatureExtractor):
   """SSD Feature Extractor using MobilenetV2 MnasFPN features."""
 
@@ -231,6 +256,7 @@ class SSDMobileNetV2MnasFPNFeatureExtractor(ssd_meta_arch.SSDFeatureExtractor):
                fpn_min_level=3,
                fpn_max_level=6,
                additional_layer_depth=48,
+               mnas_depth_multiplier=1.0,
                head_def=None,
                reuse_weights=None,
                use_explicit_padding=False,
@@ -289,6 +315,9 @@ class SSDMobileNetV2MnasFPNFeatureExtractor(ssd_meta_arch.SSDFeatureExtractor):
     self._head_def = head_def if head_def else MNASFPN_DEF
     self._data_format = data_format
     self._use_native_resize_op = use_native_resize_op
+    self._mnasfpn_dep_multiple = mnas_depth_multiplier   # Add by Roy: using for MnasFPN
+    #print("Set MnasFPN depth multipler as {}".format(self._mnasfpn_dep_multiple)) 
+    #input("Continue...")
 
   def preprocess(self, resized_inputs):
     """SSD preprocessing.
@@ -372,6 +401,14 @@ class SSDMobileNetV2MnasFPNFeatureExtractor(ssd_meta_arch.SSDFeatureExtractor):
         _apply_multiplier,
         multiplier=self._depth_multiplier,
         min_depth=self._min_depth)
+    
+    # Added by Roy: multiplier function using for mnasfpn
+    mnasfpn_multiplier_func = functools.partial(
+        _apply_multiplier,
+        multiplier=self._mnasfpn_dep_multiple,
+        min_depth=self._min_depth
+    )
+
     with tf.variable_scope('MnasFPN', reuse=self._reuse_weights):
       with slim.arg_scope(
           training_scope(l2_weight_decay=1e-4, is_training=self._is_training)):
@@ -408,5 +445,5 @@ class SSDMobileNetV2MnasFPNFeatureExtractor(ssd_meta_arch.SSDFeatureExtractor):
             output_channel=self._fpn_layer_depth,
             use_explicit_padding=self._use_explicit_padding,
             use_native_resize_op=self._use_native_resize_op,
-            multiplier_func=multiplier_func)
+            multiplier_func=mnasfpn_multiplier_func)
     return feature_maps

@@ -25,7 +25,7 @@ the MSRA provided checkpoints
 same preprocessing, batch norm scaling, etc.
 """
 import tensorflow.compat.v1 as tf
-slim = tf.contrib.slim
+import tensorflow.contrib.slim as slim
 
 from object_detection.meta_architectures import faster_rcnn_meta_arch
 from nets import resnet_utils

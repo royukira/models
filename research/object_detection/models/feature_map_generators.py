@@ -32,7 +32,7 @@ import functools
 from six.moves import range
 from six.moves import zip
 import tensorflow.compat.v1 as tf
-slim = tf.contrib.slim
+import tensorflow.contrib.slim as slim
 from object_detection.utils import ops
 from object_detection.utils import shape_utils
 

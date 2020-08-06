@@ -18,12 +18,12 @@
 
 import numpy as np
 from object_detection.utils import tf_version
-if tf_version.is_tf2:
+if tf_version.is_tf2():
   import tensorflow.compat.v1 as tf
-  import tf_slim as slim
+  import tensorflow.contrib.slim as slim
 else:
   import tensorflow as tf
-  slim = tf.contrib.slim
+  import tensorflow.contrib.slim as slim
 from google.protobuf import text_format
 
 from object_detection.builders import hyperparams_builder

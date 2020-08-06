@@ -23,7 +23,7 @@ import functools
 from absl.testing import parameterized
 import mock
 import tensorflow.compat.v1 as tf
-import tf_slim as slim
+import tensorflow.contrib.slim as slim
 
 from google.protobuf import text_format
 

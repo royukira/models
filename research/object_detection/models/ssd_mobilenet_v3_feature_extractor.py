@@ -2,7 +2,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# You may obtain a copy of the License atZhang
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
@@ -15,7 +15,7 @@
 """SSDFeatureExtractor for MobileNetV3 features."""
 
 import tensorflow.compat.v1 as tf
-slim = tf.contrib.slim
+import tensorflow.contrib.slim as slim
 
 from object_detection.meta_architectures import ssd_meta_arch
 from object_detection.models import feature_map_generators

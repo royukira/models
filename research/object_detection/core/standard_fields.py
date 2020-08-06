@@ -82,6 +82,7 @@ class InputDataFields(object):
   """
   image = 'image'
   image_additional_channels = 'image_additional_channels'
+  additional_channels_padding_num = "additional_channels_padding_num"  # added by Roy; 
   original_image = 'original_image'
   original_image_spatial_shape = 'original_image_spatial_shape'
   key = 'key'

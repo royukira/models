@@ -33,7 +33,7 @@ import collections
 import functools
 
 import tensorflow.compat.v1 as tf
-import tf_slim as slim
+import tensorflow.contrib.slim as slim
 
 
 def pix2pix_arg_scope():

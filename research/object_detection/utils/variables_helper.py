@@ -24,7 +24,7 @@ import logging
 import re
 
 import tensorflow.compat.v1 as tf
-slim = tf.contrib.slim
+import tensorflow.contrib.slim as slim
 
 from tensorflow.python.ops import variables as tf_variables
 

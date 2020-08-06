@@ -25,7 +25,7 @@ import six
 from six.moves import range
 from six.moves import zip
 import tensorflow.compat.v1 as tf
-slim = tf.contrib.slim
+import tensorflow.contrib.slim as slim
 from object_detection.core import standard_fields as fields
 from object_detection.utils import shape_utils
 from object_detection.utils import spatial_transform_ops as spatial_ops

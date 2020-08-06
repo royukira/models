@@ -15,7 +15,7 @@
 """Tests for object_detection.builders.image_resizer_builder."""
 import numpy as np
 from object_detection.utils import tf_version
-if tf_version.is_tf2:
+if tf_version.is_tf2():
   import tensorflow.compat.v1 as tf
 else:
   import tensorflow as tf

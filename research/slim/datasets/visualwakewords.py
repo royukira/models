@@ -29,7 +29,7 @@ from __future__ import print_function
 
 import os
 import tensorflow.compat.v1 as tf
-import tf_slim as slim
+import tensorflow.contrib.slim as slim
 
 from datasets import dataset_utils
 

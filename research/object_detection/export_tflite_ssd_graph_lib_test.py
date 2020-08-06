@@ -21,7 +21,7 @@ import os
 import numpy as np
 import six
 import tensorflow.compat.v1 as tf
-slim = tf.contrib.slim
+import tensorflow.contrib.slim as slim
 
 from tensorflow.core.framework import types_pb2
 from object_detection import export_tflite_ssd_graph_lib

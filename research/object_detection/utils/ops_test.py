@@ -22,7 +22,7 @@ import numpy as np
 import six
 from six.moves import range
 import tensorflow.compat.v1 as tf
-slim = tf.contrib.slim
+import tensorflow.contrib.slim as slim
 from object_detection.core import standard_fields as fields
 from object_detection.utils import ops
 from object_detection.utils import test_case

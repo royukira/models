@@ -29,7 +29,7 @@ from __future__ import print_function
 
 from six.moves import range
 import tensorflow.compat.v1 as tf
-slim = tf.contrib.slim
+import tensorflow.contrib.slim as slim
 
 from object_detection.predictors.heads import head
 

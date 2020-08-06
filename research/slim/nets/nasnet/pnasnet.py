@@ -23,7 +23,7 @@ from __future__ import print_function
 
 import copy
 import tensorflow.compat.v1 as tf
-import tf_slim as slim
+import tensorflow.contrib.slim as slim
 from tensorflow.contrib import training as contrib_training
 
 from nets.nasnet import nasnet

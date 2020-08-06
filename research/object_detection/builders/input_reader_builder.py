@@ -28,7 +28,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 from object_detection.utils import tf_version
-if tf_version.is_tf2:
+if tf_version.is_tf2():
   import tensorflow.compat.v1 as tf
 else:
   import tensorflow as tf
@@ -38,7 +38,7 @@ from object_detection.protos import input_reader_pb2
 
 # pylint: disable=g-import-not-at-top
 try:
-  import tf_slim as slim
+  import tensorflow.contrib.slim as slim
 except ImportError:
   # TF 2.0 doesn't ship with contrib.
   pass

@@ -21,7 +21,7 @@ All the class prediction heads have a predict function that receives the
 """
 import functools
 import tensorflow.compat.v1 as tf
-slim = tf.contrib.slim
+import tensorflow.contrib.slim as slim
 
 from object_detection.predictors.heads import head
 

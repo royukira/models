@@ -23,7 +23,8 @@ import functools
 import os
 
 from object_detection.utils import tf_version
-if tf_version.is_tf2:
+
+if tf_version.is_tf2():
   import tensorflow.compat.v1 as tf
 else:
   import tensorflow as tf
@@ -129,8 +130,8 @@ def _prepare_groundtruth_for_eval(detection_model, class_agnostic,
     groundtruth[input_data_fields.groundtruth_is_crowd] = tf.stack(
         detection_model.groundtruth_lists(fields.BoxListFields.is_crowd))
 
-   if detection_model.groundtruth_has_field(input_data_fields.groundtruth_area):
-    groundtruth[input_data_fields.groundtruth_area] = tf.stack(
+  if detection_model.groundtruth_has_field(input_data_fields.groundtruth_area):
+     groundtruth[input_data_fields.groundtruth_area] = tf.stack(
         detection_model.groundtruth_lists(input_data_fields.groundtruth_area))
 
   if detection_model.groundtruth_has_field(fields.BoxListFields.keypoints):
@@ -324,9 +325,15 @@ For example, if loss_getAll is True, we will get a dict:
    'Loss/classification_loss': classification_loss
   }
 Note: For now, only support localization loss! 
+
+Modified by Roy
+Data: 2020.07.21
+Description:
+1. Add "retrive_input_imgs": if true, adding input into EstimatorSpec, run the input node in Estimator.train
+   and we can exam the input whether it is right. 
 """
 def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False,
-                    postprocess_on_cpu=False, loss_getAll=False):
+                    postprocess_on_cpu=False, loss_getAll=False, retrive_input_imgs=False):
   """Creates a model function for `Estimator`.
 
   Args:
@@ -462,6 +469,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False,
         else:
           tf.train.init_from_checkpoint(train_config.fine_tune_checkpoint,
                                         available_var_map)
+          tf.logging.info("Model initialized from {}".format(train_config.fine_tune_checkpoint))
 
     if mode in (tf.estimator.ModeKeys.TRAIN, tf.estimator.ModeKeys.EVAL):
       # 调用 xxxMetaArch.loss 函数，如SSDMetaArch.loss()
@@ -488,11 +496,13 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False,
           regularization_loss = tf.add_n(
               regularization_losses, name='regularization_loss')
           losses.append(regularization_loss)
-          losses_dict['Loss/regularization_loss'] = regularization_loss
+          if loss_getAll and (meta_architecture == "ssd"):
+            losses_dict['Loss/regularization_loss'] = regularization_loss
       total_loss = tf.add_n(losses, name='total_loss')
-      losses_dict['Loss/total_loss'] = total_loss
+      if loss_getAll and (meta_architecture == "ssd"):
+        losses_dict['Loss/total_loss'] = total_loss
 
-      if loss_getAll:
+      if loss_getAll and (meta_architecture == "ssd"):
         specified_ops_dict['Loss/total_loss'] = total_loss
 
       if 'graph_rewriter_config' in configs:
@@ -612,8 +622,9 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False,
       # Eval metrics on a single example.
       eval_metric_ops = eval_util.get_eval_metric_ops_for_evaluators(
           eval_config, list(category_index.values()), eval_dict)
-      for loss_key, loss_tensor in iter(losses_dict.items()):
-        eval_metric_ops[loss_key] = tf.metrics.mean(loss_tensor)
+      if loss_getAll and (meta_architecture == "ssd"):
+        for loss_key, loss_tensor in iter(losses_dict.items()):
+          eval_metric_ops[loss_key] = tf.metrics.mean(loss_tensor)
       for var in optimizer_summary_vars:
         eval_metric_ops[var.op.name] = (var, tf.no_op())
       if vis_metric_ops is not None:
@@ -651,7 +662,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False,
         tf.add_to_collection(tf.GraphKeys.SAVERS, saver)
         scaffold = tf.train.Scaffold(saver=saver)
       
-      if len(specified_ops_dict.keys()) != 0:
+      if len(specified_ops_dict.keys()) != 0 and loss_getAll and (meta_architecture == "ssd"):
         return tf.estimator.EstimatorSpec(
           mode=mode,
           predictions=detections,
@@ -663,11 +674,22 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False,
           export_outputs=export_outputs,
           scaffold=scaffold)
 
+      if retrive_input_imgs:
+        return tf.estimator.EstimatorSpec(
+          mode=mode,
+          predictions=detections,
+          loss=total_loss,
+          train_op=train_op,
+          eval_metric_ops=eval_metric_ops,
+          export_outputs=export_outputs,
+          scaffold=scaffold,
+          export_inputs=features[fields.InputDataFields.image]
+        )
+
       return tf.estimator.EstimatorSpec(
           mode=mode,
           predictions=detections,
           loss=total_loss,
-          losses_dict=losses_dict,
           train_op=train_op,
           eval_metric_ops=eval_metric_ops,
           export_outputs=export_outputs,
@@ -682,6 +704,12 @@ Description:
 1. Add loss_getAll parameter (default:False) to create_estimator_and_inputs() function.
 
 Note: For now, only support localization loss! 
+
+Modified by Roy
+Data: 2020.07.21
+Description:
+1. Add "retrive_input_imgs": if true, adding input into EstimatorSpec, run the input node in Estimator.train
+   and we can exam the input whether it is right. 
 """
 def create_estimator_and_inputs(run_config,
                                 hparams,
@@ -700,6 +728,7 @@ def create_estimator_and_inputs(run_config,
                                 postprocess_on_cpu=False,
                                 export_to_tpu=None,
                                 loss_getAll=False,
+                                retrive_input_imgs=False,
                                 **kwargs):
   """Creates `Estimator`, input functions, and steps.
 
@@ -840,9 +869,9 @@ def create_estimator_and_inputs(run_config,
                   use_tpu, export_to_tpu)
 
   # Add loss_getAll,这样写以免有的model_fn_creator没有loss_getAll这个参数，然后忘记改导致出错
-  if loss_getAll:
+  if loss_getAll or retrive_input_imgs:
     model_fn = model_fn_creator(detection_model_fn, configs, hparams, use_tpu,
-                              postprocess_on_cpu, loss_getAll)
+                              postprocess_on_cpu, loss_getAll, retrive_input_imgs)
   else:
     model_fn = model_fn_creator(detection_model_fn, configs, hparams, use_tpu,
                               postprocess_on_cpu)

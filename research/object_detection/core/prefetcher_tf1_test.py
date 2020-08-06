@@ -23,7 +23,7 @@ import tensorflow.compat.v1 as tf
 
 # pylint: disable=g-bad-import-order,
 from object_detection.core import prefetcher
-import tf_slim as slim
+import tensorflow.contrib.slim as slim
 
 # pylint: disable=g-bad-import-order
 

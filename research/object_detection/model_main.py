@@ -20,11 +20,11 @@ from __future__ import print_function
 
 from absl import flags
 import sys
-sys.path.append('/roy_work/Object_detection_API/models/research')
-sys.path.append("/roy_work/Object_detection_API/models/research/slim/")
+sys.path.append('/my_github/models/research/')
+sys.path.append("/my_github/models/research/slim/")
 
 from object_detection.utils import tf_version
-if tf_version.is_tf2:
+if tf_version.is_tf2():
   import tensorflow.compat.v1 as tf
 else:
   import tensorflow as tf
@@ -70,8 +70,7 @@ FLAGS = flags.FLAGS
 def main(unused_argv):
   flags.mark_flag_as_required('model_dir')
   flags.mark_flag_as_required('pipeline_config_path')
-  config = tf.estimator.RunConfig(model_dir=FLAGS.model_dir)
-
+  config = tf.estimator.RunConfig(model_dir=FLAGS.model_dir, save_checkpoints_steps=5000)   # 暂时缓解训练时每次eval后出现内存不断增加的问题，目前正在排查问题
   train_and_eval_dict = model_lib.create_estimator_and_inputs(
       run_config=config,
       hparams=model_hparams.create_hparams(FLAGS.hparams_overrides),
@@ -80,7 +79,8 @@ def main(unused_argv):
       sample_1_of_n_eval_examples=FLAGS.sample_1_of_n_eval_examples,
       sample_1_of_n_eval_on_train_examples=(
           FLAGS.sample_1_of_n_eval_on_train_examples),
-      loss_getAll=False)  # 如果不是debug loss function时候，记得设置loss_getAll为false
+      loss_getAll=False,
+      retrive_input_imgs=False)  # 如果不是debug loss function时候，记得设置loss_getAll和retrive_input_imgs为false
   estimator = train_and_eval_dict['estimator']
   train_input_fn = train_and_eval_dict['train_input_fn']
   eval_input_fns = train_and_eval_dict['eval_input_fns']

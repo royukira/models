@@ -48,7 +48,7 @@ installation is working, execute the following command; it should run without
 raising any errors.
 
 ```
-python -c "import tf_slim as slim; eval = slim.evaluation.evaluate_once"
+python -c "import tensorflow.contrib.slim as slim; eval = slim.evaluation.evaluate_once"
 ```
 
 ## Installing the TF-slim image models library
@@ -152,7 +152,7 @@ is found below:
 
 ```python
 import tensorflow.compat.v1 as tf
-import tf_slim as slim
+import tensorflow.contrib.slim as slim
 from datasets import flowers
 
 

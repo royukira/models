@@ -17,7 +17,7 @@
 import os
 import tempfile
 import tensorflow.compat.v1 as tf
-slim = tf.contrib.slim
+import tensorflow.contrib.slim as slim
 from tensorflow.core.protobuf import saver_pb2
 from tensorflow.python.tools import freeze_graph  # pylint: disable=g-direct-tensorflow-import
 from object_detection.builders import graph_rewriter_builder

@@ -33,7 +33,7 @@ from __future__ import print_function
 
 import tensorflow.compat.v1 as tf
 
-import tf_slim as slim
+import tensorflow.contrib.slim as slim
 
 arg_scope = slim.arg_scope
 DATA_FORMAT_NCHW = 'NCHW'

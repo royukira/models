@@ -20,7 +20,7 @@ models.
 
 import abc
 from object_detection.utils import tf_version
-if tf_version.is_tf2:
+if tf_version.is_tf2():
   import tensorflow.compat.v1 as tf
 else:
   import tensorflow as tf
@@ -35,7 +35,7 @@ from object_detection.utils import shape_utils
 from object_detection.utils import variables_helper
 from object_detection.utils import visualization_utils
 
-slim = tf.contrib.slim
+import tensorflow.contrib.slim as slim
 
 
 class SSDFeatureExtractor(object):

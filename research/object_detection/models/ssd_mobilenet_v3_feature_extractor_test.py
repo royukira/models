@@ -15,7 +15,7 @@
 """Tests for ssd_mobilenet_v3_feature_extractor."""
 
 import tensorflow.compat.v1 as tf
-slim = tf.contrib.slim
+import tensorflow.contrib.slim as slim
 
 from object_detection.models import ssd_mobilenet_v3_feature_extractor
 from object_detection.models import ssd_mobilenet_v3_feature_extractor_testbase

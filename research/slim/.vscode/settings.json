@@ -1,5 +1,5 @@
 {
-    "python.pythonPath": "/anaconda3/envs/tf14/bin/python",
+    "python.pythonPath": "/anaconda3/envs/tf15/bin/python",
     "python.linting.pylintArgs": [
         "--extension-pkg-whitelist=cv2",
         "--contextmanager-decorators=contextlib.contextmanager,tensorflow.python.util.tf_contextlib.contextmanager"

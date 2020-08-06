@@ -42,7 +42,7 @@ else:
 
 # pylint: disable=g-import-not-at-top
 try:
-  slim = tf.contrib.slim
+  import tensorflow.contrib.slim as slim
 except ImportError:
   # TF 2.0 doesn't ship with contrib.
   pass

@@ -22,7 +22,7 @@ import functools
 from six.moves import range
 from six.moves import zip
 import tensorflow.compat.v1 as tf
-slim = tf.contrib.slim
+import tensorflow.contrib.slim as slim
 from object_detection.core import box_predictor
 from object_detection.utils import shape_utils
 from object_detection.utils import static_shape

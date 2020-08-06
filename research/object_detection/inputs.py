@@ -125,7 +125,14 @@ def assert_or_prune_invalid_boxes(boxes):
 
   return boxlist.get()
 
-
+"""
+Modified by Roy
+Data:2020.07.22
+Description: 
+1. Add 'replace_additional_channels_with_zero' for examing the effect of the additional channels (Only for eval phase, not training phase)
+2. Add 'remove_rgb_channels' for examing the effect of the rgb channel in the additional feature fusion data (Only for eval phase, not training phase)
+3. Add 'add_std_norm_noise_to_additional_channels' for examing the robust of the additional channels(Only for eval phase, not training phase)
+"""
 def transform_input_data(tensor_dict,
                          model_preprocess_fn,
                          image_resizer_fn,
@@ -136,7 +143,10 @@ def transform_input_data(tensor_dict,
                          use_multiclass_scores=False,
                          use_bfloat16=False,
                          retain_original_image_additional_channels=False,
-                         keypoint_type_weight=None):
+                         keypoint_type_weight=None,
+                         replace_additional_channels_with_zero=False,
+                         remove_rgb_channels=False,
+                         add_std_norm_noise_to_additional_channels=False):
   """A single function that is responsible for all input data transformations.
 
   Data transformation functions are applied in the following order.
@@ -195,6 +205,9 @@ def transform_input_data(tensor_dict,
       are provided by the decoder in tensor_dict since both fields are
       considered to contain the same information.
   """
+  if replace_additional_channels_with_zero:
+    assert(remove_rgb_channels is False)
+
   out_tensor_dict = tensor_dict.copy()
 
   labeled_classes_field = fields.InputDataFields.groundtruth_labeled_classes
@@ -234,15 +247,45 @@ def transform_input_data(tensor_dict,
     out_tensor_dict[fields.InputDataFields.original_image] = tf.cast(
         image_resizer_fn(out_tensor_dict[fields.InputDataFields.image],
                          None)[0], tf.uint8)
-
+    # print("img shape before concat :{}".format(out_tensor_dict[fields.InputDataFields.image].get_shape().as_list()))
+    # input("Continue...")
+  
+  # Note by Roy
+  # 官方的 Concat 操作，但是我自定义的additional_channels永远是4通道数，里面包括了一些没有用的all zero padding channels
+  # 因此需要先提出去 vaild channels，才能再做concat，
+  # 因为这里有concat支持，可以在tf_example_decoder.py里的myTfExample的decode函数中仅完成 vaild channels的提取即可
+  # 将concat操作留在这里完成，以免造成不必要的重复操作
+  # 在
   if fields.InputDataFields.image_additional_channels in out_tensor_dict:
+    #channels = out_tensor_dict[fields.InputDataFields.image_additional_channels]
+    out_tensor_dict[fields.InputDataFields.image_additional_channels] = tf.cast(
+      image_resizer_fn(out_tensor_dict[fields.InputDataFields.image_additional_channels], \
+        None)[0], 
+      tf.uint8)
     channels = out_tensor_dict[fields.InputDataFields.image_additional_channels]
+    #image = out_tensor_dict[fields.InputDataFields.image]
+    image = tf.cast(image_resizer_fn(out_tensor_dict[fields.InputDataFields.image], None)[0], tf.uint8)
+    if replace_additional_channels_with_zero:
+      channels = tf.zeros_like(channels)
+    elif remove_rgb_channels:
+      image = tf.zeros_like(image)
+    if add_std_norm_noise_to_additional_channels:
+      noise = tf.random_normal(shape=channels.get_shape().as_list(), mean=0.0, stddev=10.0)
+      noise = tf.cast(noise, tf.uint8)
+      channels = tf.add(channels, noise, name="noise_channels")
     out_tensor_dict[fields.InputDataFields.image] = tf.concat(
-        [out_tensor_dict[fields.InputDataFields.image], channels], axis=2)
+        [image, channels], axis=2)
     if retain_original_image_additional_channels:
       out_tensor_dict[
           fields.InputDataFields.image_additional_channels] = tf.cast(
               image_resizer_fn(channels, None)[0], tf.uint8)
+      # print("additional channels in retain :{}".format(out_tensor_dict[fields.InputDataFields.image_additional_channels].get_shape().as_list()))
+      # input("Continue...")
+    # For debug
+    # print("origin img shape:{}".format(out_tensor_dict[fields.InputDataFields.original_image].get_shape().as_list()))
+    # print("additional channel shape: {}".format(out_tensor_dict[fields.InputDataFields.image_additional_channels].get_shape().as_list()))
+    # print("concat_img shape:{}".format(out_tensor_dict[fields.InputDataFields.image].get_shape().as_list()))
+    # input("Continue...")
 
   # Apply data augmentation ops.
   if data_augmentation_fn is not None:
@@ -251,10 +294,14 @@ def transform_input_data(tensor_dict,
   # Apply model preprocessing ops and resize instance masks.
   image = out_tensor_dict[fields.InputDataFields.image]
   preprocessed_resized_image, true_image_shape = model_preprocess_fn(
-      tf.expand_dims(tf.cast(image, dtype=tf.float32), axis=0))
+      tf.expand_dims(tf.cast(image, dtype=tf.float32), axis=0))   # expanded to [b, h, w, c]
 
   preprocessed_shape = tf.shape(preprocessed_resized_image)
   new_height, new_width = preprocessed_shape[1], preprocessed_shape[2]
+
+  # For debug
+  # print("preprocessed concat_img shape:{}".format(preprocessed_resized_image.get_shape().as_list()))
+  # input("Continue...")
 
   im_box = tf.stack([
       0.0, 0.0,
@@ -450,6 +497,9 @@ def pad_input_data_to_static_shapes(tensor_dict,
       fields.InputDataFields.groundtruth_image_confidences: [num_classes],
       fields.InputDataFields.groundtruth_labeled_classes: [num_classes],
   }
+  # added by Roy
+  if fields.InputDataFields.additional_channels_padding_num in tensor_dict:
+    padding_shapes[fields.InputDataFields.additional_channels_padding_num] = []
 
   if fields.InputDataFields.original_image in tensor_dict:
     padding_shapes[fields.InputDataFields.original_image] = [
@@ -908,7 +958,10 @@ def eval_input(eval_config, eval_input_config, model_config,
         retain_original_image=eval_config.retain_original_images,
         retain_original_image_additional_channels=
         eval_config.retain_original_image_additional_channels,
-        keypoint_type_weight=keypoint_type_weight)
+        keypoint_type_weight=keypoint_type_weight,
+        replace_additional_channels_with_zero=eval_input_config.replace_additional_channels_with_zero,
+        remove_rgb_channels=eval_input_config.remove_rgb_channels,
+        add_std_norm_noise_to_additional_channels=eval_input_config.add_std_norm_noise_to_additional_channels)
     tensor_dict = pad_input_data_to_static_shapes(
         tensor_dict=transform_data_fn(tensor_dict),
         max_num_boxes=eval_input_config.max_number_of_boxes,

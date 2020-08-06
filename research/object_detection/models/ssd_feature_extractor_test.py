@@ -31,7 +31,7 @@ from object_detection.builders import hyperparams_builder
 from object_detection.protos import hyperparams_pb2
 from object_detection.utils import test_case
 
-slim = tf.contrib.slim
+import tensorflow.contrib.slim as slim
 
 class SsdFeatureExtractorTestBase(test_case.TestCase):
 
